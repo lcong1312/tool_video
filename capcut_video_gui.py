@@ -64,6 +64,7 @@ class CapCutVideoApp(tk.Tk):
         self.seed_var = tk.StringVar()
         self.burn_subtitles_var = tk.BooleanVar(value=False)
         self.use_gpu_var = tk.BooleanVar(value=True)
+        self.only_16x9_var = tk.BooleanVar(value=True)
         self.create_capcut_project_var = tk.BooleanVar(value=True)
         self.open_capcut_var = tk.BooleanVar(value=True)
         self.status_var = tk.StringVar(value="San sang")
@@ -108,6 +109,9 @@ class CapCutVideoApp(tk.Tk):
         )
         ttk.Checkbutton(options, text="Dung GPU", variable=self.use_gpu_var).grid(
             row=2, column=0, columnspan=2, sticky="w", pady=(8, 0)
+        )
+        ttk.Checkbutton(options, text="Chi lay video 16:9", variable=self.only_16x9_var).grid(
+            row=2, column=1, columnspan=3, sticky="w", pady=(8, 0)
         )
         ttk.Checkbutton(options, text="Mo CapCut sau khi xong", variable=self.open_capcut_var).grid(
             row=2, column=3, columnspan=4, sticky="w", pady=(8, 0)
@@ -259,12 +263,20 @@ class CapCutVideoApp(tk.Tk):
             self.ui(self.set_status, "Dang doc file SRT...")
             duration = srt_duration(srt)
             clip_count = math.ceil(duration / clip_length)
-            self.ui(self.set_status, "Dang loc video ngang 16:9...")
+            only_16x9 = bool(self.only_16x9_var.get())
+            self.ui(
+                self.set_status,
+                "Dang loc video ngang 16:9..." if only_16x9 else "Dang doc danh sach video...",
+            )
 
             def scan_progress(index: int, total: int, path: Path) -> None:
-                self.ui(self.set_status, f"Dang loc video 16:9: {index}/{total} - {path.name}")
+                if only_16x9:
+                    text = f"Dang loc video 16:9: {index}/{total} - {path.name}"
+                else:
+                    text = f"Dang doc video: {index}/{total} - {path.name}"
+                self.ui(self.set_status, text)
 
-            videos = collect_videos(video_folder, progress=scan_progress)
+            videos = collect_videos(video_folder, only_16x9=only_16x9, progress=scan_progress)
             output.parent.mkdir(parents=True, exist_ok=True)
 
             self.ui(self.write_log, f"Encoder: {encoder}")

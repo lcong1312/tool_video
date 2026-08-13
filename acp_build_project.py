@@ -1356,6 +1356,18 @@ def _meta_materials(clips: list[Path]) -> list[dict]:
     ]
 
 
+def _empty_meta_materials() -> list[dict]:
+    return [
+        {"type": 0, "value": []},
+        {"type": 1, "value": []},
+        {"type": 2, "value": []},
+        {"type": 3, "value": []},
+        {"type": 6, "value": []},
+        {"type": 7, "value": []},
+        {"type": 8, "value": []},
+    ]
+
+
 def write_modern_project_files(
     project_folder: Path,
     content: dict,
@@ -1535,7 +1547,7 @@ def build_project(
         normalize_paths=normalize_paths,
     )
     meta["draft_timeline_materials_size_"] = sum(path.stat().st_size for path in project_clips if path.is_file())
-    meta["draft_materials"] = _meta_materials(project_clips)
+    meta["draft_materials"] = _empty_meta_materials()
     save_json(project_folder / "draft_meta_info.json", meta, normalize_paths=False)
     trigger_directory_scan(project_folder)
     update_root_meta(project_folder, project_name, meta, cursor_us, project_clips[0])

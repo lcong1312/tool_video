@@ -344,6 +344,18 @@ def _update_content_for_clips(data: dict, clips: list[tuple[Path, int, int, int]
     return data
 
 
+def _empty_meta_materials() -> list[dict]:
+    return [
+        {"type": 0, "value": []},
+        {"type": 1, "value": []},
+        {"type": 2, "value": []},
+        {"type": 3, "value": []},
+        {"type": 6, "value": []},
+        {"type": 7, "value": []},
+        {"type": 8, "value": []},
+    ]
+
+
 def _update_meta(data: dict, project_folder: Path, project_name: str, video: Path, duration_us: int) -> dict:
     now_us = int(time.time() * 1_000_000)
     data["draft_id"] = str(uuid.uuid4()).upper()
@@ -354,12 +366,7 @@ def _update_meta(data: dict, project_folder: Path, project_name: str, video: Pat
     data["tm_draft_create"] = now_us
     data["tm_draft_modified"] = now_us
     data["tm_duration"] = duration_us
-    data["draft_materials"] = [
-        {
-            "type": 0,
-            "value": _capcut_path(video),
-        }
-    ]
+    data["draft_materials"] = _empty_meta_materials()
     return data
 
 
@@ -729,7 +736,7 @@ def create_capcut_project_from_clips(
         clips[0],
         total_duration_us,
     )
-    meta["draft_materials"] = [{"type": 0, "value": _capcut_path(clip)} for clip in clips]
+    meta["draft_materials"] = _empty_meta_materials()
     _create_cover(clips[0], project_folder)
     _copy_support_files(template, project_folder)
     _write_modern_support_files(project_folder, content, clips, template)
