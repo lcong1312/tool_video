@@ -854,6 +854,9 @@ def find_segment_schema_template() -> Path:
     for folder in CAPCUT_DRAFT_ROOT.iterdir():
         if not folder.is_dir() or folder.name.startswith("."):
             continue
+        lowered = folder.name.lower()
+        if lowered.startswith("dl14") or "clone" in lowered or "test" in lowered:
+            continue
         if (folder / "Resources" / "auto_clips").exists():
             continue
         content_path = folder / "draft_content.json"
@@ -875,6 +878,143 @@ def find_segment_schema_template() -> Path:
     return find_real_template()
 
 
+def find_text_schema_template() -> Path | None:
+    candidates = []
+    for folder in CAPCUT_DRAFT_ROOT.iterdir():
+        if not folder.is_dir() or folder.name.startswith("."):
+            continue
+        if (folder / "Resources" / "auto_clips").exists():
+            continue
+        content_path = folder / "draft_content.json"
+        if not content_path.is_file():
+            continue
+        try:
+            content = load_json(content_path)
+        except Exception:
+            continue
+        has_text_track = any(
+            track.get("type") == "text" and track.get("segments")
+            for track in content.get("tracks", [])
+        )
+        if has_text_track and content.get("materials", {}).get("texts"):
+            candidates.append(folder)
+    if candidates:
+        return max(candidates, key=lambda item: item.stat().st_mtime)
+    return None
+
+
+def parse_srt_cues(path: Path) -> list[tuple[int, int, str]]:
+    from make_capcut_video import parse_srt_timestamp
+
+    text = path.read_text(encoding="utf-8-sig", errors="replace")
+    blocks = text.replace("\r\n", "\n").replace("\r", "\n").split("\n\n")
+    cues: list[tuple[int, int, str]] = []
+    for block in blocks:
+        lines = [line.strip() for line in block.split("\n") if line.strip()]
+        if not lines:
+            continue
+        time_index = next((idx for idx, line in enumerate(lines) if "-->" in line), -1)
+        if time_index < 0:
+            continue
+        start_text, end_text = lines[time_index].split("-->", 1)
+        start_token = start_text.strip().split()[0]
+        end_token = end_text.strip().split()[0]
+        body = " ".join(lines[time_index + 1 :]).strip()
+        if not body:
+            continue
+        start_us = int(parse_srt_timestamp(start_token) * 1_000_000)
+        end_us = int(parse_srt_timestamp(end_token) * 1_000_000)
+        duration_us = max(1, end_us - start_us)
+        cues.append((start_us, duration_us, body))
+    return cues
+
+
+def _set_text_material_content(material: dict, text: str) -> None:
+    try:
+        payload = json.loads(material.get("content") or "{}")
+    except Exception:
+        payload = {}
+    payload["text"] = text
+    styles = payload.get("styles")
+    if isinstance(styles, list):
+        for style in styles:
+            if isinstance(style, dict):
+                style["range"] = [0, len(text)]
+    material["content"] = json.dumps(payload, ensure_ascii=False, separators=(",", ":"))
+    material["recognize_text"] = text
+    material["base_content"] = ""
+    if isinstance(material.get("words"), dict):
+        material["words"] = {"start_time": [], "end_time": [], "text": []}
+    if isinstance(material.get("current_words"), dict):
+        material["current_words"] = {"start_time": [], "end_time": [], "text": []}
+
+
+def add_srt_to_content(content: dict, srt_path: Path) -> None:
+    cues = parse_srt_cues(srt_path)
+    if not cues:
+        return
+    schema_folder = find_text_schema_template()
+    if not schema_folder:
+        raise RuntimeError("Khong tim thay project CapCut mau co subtitle/text track de import SRT.")
+    schema_content = load_json(schema_folder / "draft_content.json")
+    schema_track = next(
+        track
+        for track in schema_content.get("tracks", [])
+        if track.get("type") == "text" and track.get("segments")
+    )
+    schema_segment = schema_track["segments"][0]
+    schema_text = schema_content.get("materials", {}).get("texts", [None])[0]
+    schema_animation = schema_content.get("materials", {}).get("material_animations", [None])[0]
+    if not schema_text or not schema_animation:
+        raise RuntimeError("Project mau khong du text material de import SRT.")
+
+    materials = content.setdefault("materials", {})
+    for key, value in schema_content.get("materials", {}).items():
+        materials.setdefault(key, [] if isinstance(value, list) else _json_clone(value))
+    materials.setdefault("texts", [])
+    materials.setdefault("material_animations", [])
+
+    text_track = _json_clone(schema_track)
+    text_track["id"] = new_id()
+    text_track["segments"] = []
+    text_track["type"] = "text"
+    text_track["name"] = ""
+    text_track["is_default_name"] = True
+
+    for index, (start_us, duration_us, cue_text) in enumerate(cues):
+        text_id = new_id()
+        animation_id = new_id()
+
+        text_material = _json_clone(schema_text)
+        text_material["id"] = text_id
+        text_material["type"] = "subtitle"
+        text_material["group_id"] = f"import_{int(time.time() * 1000)}"
+        _set_text_material_content(text_material, cue_text)
+        materials["texts"].append(text_material)
+
+        animation = _json_clone(schema_animation)
+        animation["id"] = animation_id
+        materials["material_animations"].append(animation)
+
+        segment = _json_clone(schema_segment)
+        segment.update(
+            {
+                "id": new_id(),
+                "material_id": text_id,
+                "target_timerange": {"start": start_us, "duration": duration_us},
+                "render_timerange": {"start": 0, "duration": 0},
+                "source_timerange": None,
+                "extra_material_refs": [animation_id],
+                "render_index": 14000 + index,
+                "track_render_index": 2,
+                "visible": True,
+            }
+        )
+        text_track["segments"].append(segment)
+
+    content.setdefault("tracks", []).append(text_track)
+
+
 def _clear_material_lists(materials: dict) -> None:
     for key, value in list(materials.items()):
         if isinstance(value, list):
@@ -894,6 +1034,7 @@ def build_content_from_real_schema(
     width: int,
     height: int,
     clip_durations: list[float] | None = None,
+    srt_path: Path | None = None,
 ) -> tuple[dict, int]:
     from make_capcut_video import ffprobe_duration, ffprobe_video_size
 
@@ -1007,6 +1148,13 @@ def build_content_from_real_schema(
 
     content["tracks"] = [track]
     content["duration"] = cursor_us
+    if srt_path and srt_path.is_file():
+        add_srt_to_content(content, srt_path)
+        cue_end = 0
+        for start_us, duration_us, _text in parse_srt_cues(srt_path):
+            cue_end = max(cue_end, start_us + duration_us)
+        content["duration"] = max(content["duration"], cue_end)
+        cursor_us = content["duration"]
     content["keyframes"] = {
         "videos": [],
         "audios": [],
@@ -1478,6 +1626,7 @@ def build_project(
     width: int,
     height: int,
     clip_durations: list[float] | None = None,
+    srt_path: Path | None = None,
     project_folder: Path | None = None,
     clips_are_internal: bool = False,
     legacy_mode: bool = False,
@@ -1520,6 +1669,7 @@ def build_project(
         width,
         height,
         clip_durations=clip_durations,
+        srt_path=srt_path,
     )
     if normalize_paths:
         content = normalize_json_paths(content)
@@ -1572,6 +1722,7 @@ def main() -> int:
         width=int(request.get("width", 1920)),
         height=int(request.get("height", 1080)),
         clip_durations=[float(item) for item in request.get("clip_durations", [])],
+        srt_path=Path(request["srt_path"]) if request.get("srt_path") else None,
         project_folder=Path(request["project_folder"]) if request.get("project_folder") else None,
         clips_are_internal=bool(request.get("clips_are_internal", False)),
         legacy_mode=bool(request.get("legacy_mode", False)),

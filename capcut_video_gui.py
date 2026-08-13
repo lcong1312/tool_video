@@ -65,6 +65,7 @@ class CapCutVideoApp(tk.Tk):
         self.burn_subtitles_var = tk.BooleanVar(value=False)
         self.use_gpu_var = tk.BooleanVar(value=True)
         self.only_16x9_var = tk.BooleanVar(value=True)
+        self.import_srt_var = tk.BooleanVar(value=True)
         self.create_capcut_project_var = tk.BooleanVar(value=True)
         self.open_capcut_var = tk.BooleanVar(value=True)
         self.status_var = tk.StringVar(value="San sang")
@@ -112,6 +113,9 @@ class CapCutVideoApp(tk.Tk):
         )
         ttk.Checkbutton(options, text="Chi lay video 16:9", variable=self.only_16x9_var).grid(
             row=2, column=1, columnspan=3, sticky="w", pady=(8, 0)
+        )
+        ttk.Checkbutton(options, text="Import SRT vao CapCut", variable=self.import_srt_var).grid(
+            row=3, column=0, columnspan=3, sticky="w", pady=(8, 0)
         )
         ttk.Checkbutton(options, text="Mo CapCut sau khi xong", variable=self.open_capcut_var).grid(
             row=2, column=3, columnspan=4, sticky="w", pady=(8, 0)
@@ -358,6 +362,7 @@ class CapCutVideoApp(tk.Tk):
                     project_name=srt.stem,
                     fallback_clip_duration=clip_length,
                     clip_durations=clip_durations,
+                    srt_path=srt if self.import_srt_var.get() else None,
                     project_folder=project_folder,
                     clips_are_internal=project_folder is not None,
                     backup_project=False,
