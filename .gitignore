@@ -1,0 +1,52 @@
+# Python cache / virtual environments
+__pycache__/
+*.py[cod]
+*.pyo
+.Python
+.venv/
+venv/
+env/
+
+# Tool outputs
+output.mp4
+*.tmp.mp4
+*_clips/
+output_clips/
+capcut_video.mp4
+joined_without_subtitles.mp4
+
+# Large generated media
+*.mp4
+*.mov
+*.mkv
+*.avi
+*.webm
+*.m4v
+*.wav
+*.mp3
+
+# Keep bundled FFmpeg executables if this folder is used for portability.
+!bin/
+!bin/ffmpeg.exe
+!bin/ffprobe.exe
+!bin/ffplay.exe
+
+# Temporary/build folders
+tmp/
+temp/
+*.tmp
+*.bak
+*.log
+
+# Local response/debug files
+acp_response.json
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# PowerShell / installer scratch files
+tools/ffmpeg/
