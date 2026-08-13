@@ -101,6 +101,14 @@ Nếu bật `Burn subtitle vào video`, tool sẽ ghép phụ đề trực tiế
 
 Nếu mục tiêu là chỉnh từng đoạn trong CapCut thì thường nên tắt mục này, vì project CapCut sẽ chứa các clip riêng lẻ để chỉnh sửa.
 
+## Tiếp tục khi bị lỗi
+
+Mặc định GUI bật `Tiếp tục clip đã tạo`.
+
+Khi bật mục này, tool sẽ lưu tạm các clip đã render trong project tạm của CapCut. Nếu đang chạy mà bị lỗi hoặc phải dừng giữa chừng, chỉ cần chạy lại với cùng file SRT và cùng cấu hình, tool sẽ tự bỏ qua các clip đã tạo hợp lệ và chỉ render tiếp phần còn thiếu.
+
+Nếu bạn đổi file SRT, đổi folder video, đổi thời lượng mỗi clip hoặc đổi kích thước video, tool sẽ tự xóa clip tạm cũ và tạo lại từ đầu để tránh dùng nhầm dữ liệu.
+
 ## Chạy bằng dòng lệnh
 
 Tạo một video MP4 hoàn chỉnh từ SRT và folder video:

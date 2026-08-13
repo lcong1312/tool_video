@@ -6,6 +6,7 @@ Small Windows GUI for make_capcut_video.py.
 from __future__ import annotations
 
 import math
+import json
 import os
 import random
 import shutil
@@ -66,6 +67,7 @@ class CapCutVideoApp(tk.Tk):
         self.use_gpu_var = tk.BooleanVar(value=True)
         self.only_16x9_var = tk.BooleanVar(value=True)
         self.import_srt_var = tk.BooleanVar(value=True)
+        self.resume_project_var = tk.BooleanVar(value=True)
         self.create_capcut_project_var = tk.BooleanVar(value=True)
         self.open_capcut_var = tk.BooleanVar(value=True)
         self.status_var = tk.StringVar(value="San sang")
@@ -116,6 +118,9 @@ class CapCutVideoApp(tk.Tk):
         )
         ttk.Checkbutton(options, text="Import SRT vao CapCut", variable=self.import_srt_var).grid(
             row=3, column=0, columnspan=3, sticky="w", pady=(8, 0)
+        )
+        ttk.Checkbutton(options, text="Tiep tuc clip da tao", variable=self.resume_project_var).grid(
+            row=3, column=3, columnspan=3, sticky="w", pady=(8, 0)
         )
         ttk.Checkbutton(options, text="Mo CapCut sau khi xong", variable=self.open_capcut_var).grid(
             row=2, column=3, columnspan=4, sticky="w", pady=(8, 0)
@@ -289,14 +294,42 @@ class CapCutVideoApp(tk.Tk):
             self.ui(self.set_progress, 0, clip_count + 1)
 
             project_folder = None
+            resume_manifest_path: Path | None = None
             if self.create_capcut_project_var.get():
                 self.ui(self.set_status, "Dang tao project CapCut truc tiep...")
-                project_folder = prepare_capcut_project(srt.stem)
+                resume_enabled = bool(self.resume_project_var.get())
+                project_folder = prepare_capcut_project(srt.stem, resume=resume_enabled)
                 clips_output_dir = project_folder / "Resources" / "auto_clips"
-                if clips_output_dir.exists():
+                if clips_output_dir.exists() and not resume_enabled:
                     shutil.rmtree(clips_output_dir)
                 clips_output_dir.mkdir(parents=True, exist_ok=True)
+                resume_manifest_path = project_folder / ".auto_resume.json"
+                resume_config = {
+                    "srt": str(srt),
+                    "video_folder": str(video_folder),
+                    "duration": round(duration, 6),
+                    "clip_count": clip_count,
+                    "clip_length": clip_length,
+                    "width": width,
+                    "height": height,
+                    "only_16x9": only_16x9,
+                    "burn_subtitles": bool(self.burn_subtitles_var.get()),
+                    "import_srt": bool(self.import_srt_var.get()),
+                }
+                old_config = None
+                if resume_enabled and resume_manifest_path.is_file():
+                    try:
+                        old_config = json.loads(resume_manifest_path.read_text(encoding="utf-8"))
+                    except Exception:
+                        old_config = None
+                if resume_enabled and old_config and old_config != resume_config:
+                    self.ui(self.write_log, "Cau hinh da thay doi, xoa clip tam cu va tao lai tu dau.")
+                    shutil.rmtree(clips_output_dir, ignore_errors=True)
+                    clips_output_dir.mkdir(parents=True, exist_ok=True)
+                resume_manifest_path.write_text(json.dumps(resume_config, ensure_ascii=False, indent=2), encoding="utf-8")
                 self.ui(self.write_log, f"Project CapCut: {project_folder}")
+                if resume_enabled:
+                    self.ui(self.write_log, "Da bat tiep tuc: clip nao da tao hop le se duoc bo qua.")
                 self.ui(self.write_log, "Tool tu tao project, khong can vao CapCut tao du an trong.")
             else:
                 clips_output_dir = output.with_suffix("")
@@ -322,16 +355,25 @@ class CapCutVideoApp(tk.Tk):
                         self.set_status,
                         f"Dang tao clip {index + 1}/{clip_count} - {current_clip_length:.2f}s ({percent}%)",
                     )
-                    self.create_valid_clip(
-                        videos,
-                        clip_path,
-                        clip_length=current_clip_length,
-                        width=width,
-                        height=height,
-                        index=index,
-                        clip_count=clip_count,
-                        encoder=encoder,
-                    )
+                    reused_clip = False
+                    if self.create_capcut_project_var.get() and self.resume_project_var.get() and clip_path.is_file():
+                        try:
+                            validate_video_file(clip_path)
+                            reused_clip = True
+                            self.ui(self.write_log, f"[{index + 1}/{clip_count}] Da co, bo qua: {clip_path.name}")
+                        except Exception:
+                            clip_path.unlink(missing_ok=True)
+                    if not reused_clip:
+                        self.create_valid_clip(
+                            videos,
+                            clip_path,
+                            clip_length=current_clip_length,
+                            width=width,
+                            height=height,
+                            index=index,
+                            clip_count=clip_count,
+                            encoder=encoder,
+                        )
                     clips.append(clip_path)
                     clip_durations.append(current_clip_length)
                     self.ui(self.set_progress, index + 1, clip_count + 1)
@@ -367,6 +409,7 @@ class CapCutVideoApp(tk.Tk):
                     clips_are_internal=project_folder is not None,
                     backup_project=False,
                 )
+                (project / ".auto_resume.json").unlink(missing_ok=True)
                 self.ui(self.write_log, f"Da tao project CapCut: {project}")
             self.ui(self.set_status, "Hoan tat 100%")
             if output_created:

@@ -81,8 +81,8 @@ def unique_project_folder(name: str) -> Path:
 
 def unique_build_folder(name: str) -> Path:
     BUILD_ROOT.mkdir(parents=True, exist_ok=True)
-    base = "".join(char for char in name if char not in r'<>:"/\|?*').strip() or "Auto Clips"
-    candidate = BUILD_ROOT / base
+    candidate = build_folder_for_name(name)
+    base = candidate.name
     if not candidate.exists():
         return candidate
     for index in range(1, 1000):
@@ -90,6 +90,12 @@ def unique_build_folder(name: str) -> Path:
         if not candidate.exists():
             return candidate
     raise RuntimeError("Cannot create unique temporary build folder.")
+
+
+def build_folder_for_name(name: str) -> Path:
+    BUILD_ROOT.mkdir(parents=True, exist_ok=True)
+    base = "".join(char for char in name if char not in r'<>:"/\|?*').strip() or "Auto Clips"
+    return BUILD_ROOT / base
 
 
 def promote_build_folder(build_folder: Path, project_name: str) -> Path:
@@ -949,6 +955,22 @@ def _set_text_material_content(material: dict, text: str) -> None:
         material["current_words"] = {"start_time": [], "end_time": [], "text": []}
 
 
+def _unlock_track(track: dict) -> None:
+    track["flag"] = 0
+    track["attribute"] = 0
+    for key in ("locked", "is_locked", "isLock", "is_lock"):
+        if key in track:
+            track[key] = False
+
+
+def _unlock_segment(segment: dict) -> None:
+    segment["track_attribute"] = 0
+    segment["visible"] = True
+    for key in ("locked", "is_locked", "isLock", "is_lock"):
+        if key in segment:
+            segment[key] = False
+
+
 def add_srt_to_content(content: dict, srt_path: Path) -> None:
     cues = parse_srt_cues(srt_path)
     if not cues:
@@ -980,6 +1002,7 @@ def add_srt_to_content(content: dict, srt_path: Path) -> None:
     text_track["type"] = "text"
     text_track["name"] = ""
     text_track["is_default_name"] = True
+    _unlock_track(text_track)
 
     for index, (start_us, duration_us, cue_text) in enumerate(cues):
         text_id = new_id()
@@ -1008,8 +1031,10 @@ def add_srt_to_content(content: dict, srt_path: Path) -> None:
                 "render_index": 14000 + index,
                 "track_render_index": 2,
                 "visible": True,
+                "track_attribute": 0,
             }
         )
+        _unlock_segment(segment)
         text_track["segments"].append(segment)
 
     content.setdefault("tracks", []).append(text_track)
@@ -1080,6 +1105,7 @@ def build_content_from_real_schema(
     track["type"] = "video"
     track["name"] = ""
     track["is_default_name"] = True
+    _unlock_track(track)
 
     cursor_us = 0
     ref_keys = [
@@ -1141,8 +1167,10 @@ def build_content_from_real_schema(
                 "render_index": 0,
                 "track_render_index": 0,
                 "visible": True,
+                "track_attribute": 0,
             }
         )
+        _unlock_segment(segment)
         track["segments"].append(segment)
         cursor_us += duration_us
 
@@ -1709,8 +1737,13 @@ def main() -> int:
     request = load_json(request_path)
     if request.get("action") == "prepare":
         project_name = request.get("project_name") or f"Auto Clips {time.strftime('%Y%m%d %H%M%S')}"
-        project_folder = unique_build_folder(project_name)
-        copy_template(project_folder)
+        if request.get("resume"):
+            project_folder = build_folder_for_name(project_name)
+            if not (project_folder / "draft_content.json").is_file() or not (project_folder / "draft_meta_info.json").is_file():
+                copy_template(project_folder)
+        else:
+            project_folder = unique_build_folder(project_name)
+            copy_template(project_folder)
         media_dir = project_folder / "Resources" / "auto_clips"
         media_dir.mkdir(parents=True, exist_ok=True)
         print(project_folder)

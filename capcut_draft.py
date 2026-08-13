@@ -747,12 +747,16 @@ def create_capcut_project_from_clips(
     return project_folder
 
 
-def prepare_capcut_project(project_name: str) -> Path:
+def prepare_capcut_project(project_name: str, resume: bool = False) -> Path:
     if not (ACP_PYTHON.is_file() and ACP_HELPER.is_file()):
         raise RuntimeError("Khong tim thay Auto Capcut Pro builder de tao project truoc.")
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as handle:
         request_path = Path(handle.name)
-        json.dump({"action": "prepare", "project_name": project_name}, handle, ensure_ascii=False)
+        json.dump(
+            {"action": "prepare", "project_name": project_name, "resume": resume},
+            handle,
+            ensure_ascii=False,
+        )
     try:
         result = subprocess.run(
             [str(ACP_PYTHON), str(ACP_HELPER), str(request_path)],
