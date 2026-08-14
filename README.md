@@ -76,6 +76,46 @@ Các định dạng video được hỗ trợ:
 .mp4, .mov, .mkv, .avi, .webm, .m4v
 ```
 
+## Tải video từ Pexels
+
+GUI có thêm tùy chọn `Tải từ Pexels`.
+
+Khi bật tùy chọn này:
+
+1. Nhập `API key` của Pexels.
+2. Nhập `Từ khóa`, ví dụ `nature`, `city`, `business`, `travel`.
+3. Nhập `Luồng tải`, tối đa `10`, để tải nhiều video song song.
+4. Ô `Folder video` sẽ trở thành thư mục cache để lưu video Pexels đã tải.
+5. Bấm `Tạo video` như bình thường.
+
+Số video cần tải sẽ tự tính theo thời lượng file SRT:
+
+```text
+số video = làm tròn lên(thời lượng SRT / mỗi clip)
+```
+
+Ví dụ SRT dài 300 giây, mỗi clip 3 giây thì tool sẽ cố tải 100 video.
+
+Khi tải từ Pexels, tool luôn chỉ lấy video ngang 16:9. Bạn không cần tick thêm `Chỉ lấy video 16:9`; trong chế độ Pexels tùy chọn này sẽ tự bật.
+
+Nếu để trống từ khóa, tool sẽ tải video phổ biến từ Pexels.
+
+Sau lần nhập đầu tiên, API key Pexels sẽ được lưu trong file:
+
+```text
+config.json
+```
+
+ở cùng thư mục tool. Lần sau mở GUI, tool sẽ tự điền lại API key từ file này. File này có chứa key riêng của bạn nên không nên đưa lên GitHub hoặc gửi cho người khác.
+
+Tool lưu thông tin nguồn Pexels tại:
+
+```text
+pexels_attribution.json
+```
+
+trong thư mục cache video. File này dùng để biết video lấy từ đâu và ai là tác giả trên Pexels.
+
 ## Project CapCut được tạo ra như thế nào
 
 Tool sẽ:

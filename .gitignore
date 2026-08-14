@@ -12,6 +12,7 @@ output.mp4
 *.tmp.mp4
 *_clips/
 output_clips/
+pexels_downloads/
 capcut_video.mp4
 joined_without_subtitles.mp4
 
@@ -47,6 +48,7 @@ temp/
 
 # Local response/debug files
 acp_response.json
+config.json
 
 # OS/editor files
 .DS_Store

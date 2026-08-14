@@ -32,14 +32,32 @@ from capcut_draft import (
     create_capcut_project_from_clips,
     prepare_capcut_project,
 )
+from pexels_downloader import download_pexels_videos
 
 
+APP_CONFIG = Path(__file__).with_name("config.json")
 COMMON_CAPCUT_PATHS = [
     Path(os.environ.get("LOCALAPPDATA", "")) / "CapCut" / "Apps" / "CapCut.exe",
     Path(os.environ.get("LOCALAPPDATA", "")) / "CapCut" / "CapCut.exe",
     Path(os.environ.get("PROGRAMFILES", "")) / "CapCut" / "CapCut.exe",
     Path(os.environ.get("PROGRAMFILES(X86)", "")) / "CapCut" / "CapCut.exe",
 ]
+
+
+def load_app_config() -> dict:
+    if not APP_CONFIG.is_file():
+        return {}
+    try:
+        with APP_CONFIG.open("r", encoding="utf-8-sig") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def save_app_config(data: dict) -> None:
+    with APP_CONFIG.open("w", encoding="utf-8") as handle:
+        json.dump(data, handle, ensure_ascii=False, indent=2)
 
 
 def find_capcut() -> Path | None:
@@ -53,8 +71,9 @@ class CapCutVideoApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("SRT to CapCut Video")
-        self.geometry("760x520")
-        self.minsize(720, 500)
+        self.geometry("820x620")
+        self.minsize(780, 580)
+        self.config_data = load_app_config()
 
         self.srt_var = tk.StringVar()
         self.folder_var = tk.StringVar()
@@ -70,7 +89,14 @@ class CapCutVideoApp(tk.Tk):
         self.resume_project_var = tk.BooleanVar(value=True)
         self.create_capcut_project_var = tk.BooleanVar(value=True)
         self.open_capcut_var = tk.BooleanVar(value=True)
-        self.status_var = tk.StringVar(value="San sang")
+        self.use_pexels_var = tk.BooleanVar(value=False)
+        self.source_var = tk.StringVar(value="local")
+        self.pexels_query_var = tk.StringVar(value=str(self.config_data.get("pexels_query") or "nature"))
+        self.pexels_threads_var = tk.StringVar(value=str(self.config_data.get("pexels_threads") or "10"))
+        self.pexels_api_key_var = tk.StringVar(
+            value=str(self.config_data.get("pexels_api_key") or os.environ.get("PEXELS_API_KEY", ""))
+        )
+        self.status_var = tk.StringVar(value="Sẵn sàng")
         self.percent_var = tk.StringVar(value="0%")
         capcut = find_capcut()
         self.capcut_var = tk.StringVar(value=str(capcut) if capcut else "")
@@ -83,72 +109,118 @@ class CapCutVideoApp(tk.Tk):
         root.pack(fill="both", expand=True)
         root.columnconfigure(1, weight=1)
 
-        self._path_row(root, 0, "File SRT", self.srt_var, self.pick_srt)
-        self._path_row(root, 1, "Folder video", self.folder_var, self.pick_folder)
-        self._path_row(root, 2, "File xuat", self.output_var, self.pick_output)
-        self._path_row(root, 3, "CapCut.exe", self.capcut_var, self.pick_capcut)
+        source = ttk.Frame(root)
+        source.grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
+        ttk.Label(source, text="Nguồn video").pack(side="left", padx=(0, 12))
+        ttk.Radiobutton(source, text="Video trong máy", variable=self.source_var, value="local", command=self.update_source_ui).pack(
+            side="left", padx=(0, 12)
+        )
+        ttk.Radiobutton(source, text="Tải từ Pexels", variable=self.source_var, value="pexels", command=self.update_source_ui).pack(
+            side="left"
+        )
+
+        self._path_row(root, 1, "File SRT", self.srt_var, self.pick_srt)
+        self.folder_row = ttk.Frame(root)
+        self.folder_row.grid(row=2, column=0, columnspan=3, sticky="ew")
+        self.folder_row.columnconfigure(1, weight=1)
+        ttk.Label(self.folder_row, text="Thư mục video").grid(row=0, column=0, sticky="w", pady=5)
+        ttk.Entry(self.folder_row, textvariable=self.folder_var).grid(row=0, column=1, sticky="ew", padx=8, pady=5)
+        ttk.Button(self.folder_row, text="Chọn", command=self.pick_folder).grid(row=0, column=2, sticky="ew", pady=5)
+        self._path_row(root, 3, "File xuất", self.output_var, self.pick_output)
+        self._path_row(root, 4, "CapCut.exe", self.capcut_var, self.pick_capcut)
 
         options = ttk.Frame(root)
-        options.grid(row=4, column=0, columnspan=3, sticky="ew", pady=(14, 8))
+        options.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(14, 8))
         for index in range(8):
             options.columnconfigure(index, weight=1)
 
-        ttk.Label(options, text="Moi clip").grid(row=0, column=0, sticky="w")
+        ttk.Label(options, text="Mỗi clip").grid(row=0, column=0, sticky="w")
         ttk.Entry(options, textvariable=self.clip_length_var, width=8).grid(row=0, column=1, sticky="w")
-        ttk.Label(options, text="giay").grid(row=0, column=2, sticky="w", padx=(4, 18))
+        ttk.Label(options, text="giây").grid(row=0, column=2, sticky="w", padx=(4, 18))
 
-        ttk.Label(options, text="Kich thuoc").grid(row=0, column=3, sticky="w")
+        ttk.Label(options, text="Kích thước").grid(row=0, column=3, sticky="w")
         ttk.Entry(options, textvariable=self.width_var, width=8).grid(row=0, column=4, sticky="w")
         ttk.Label(options, text="x").grid(row=0, column=5, sticky="w", padx=4)
         ttk.Entry(options, textvariable=self.height_var, width=8).grid(row=0, column=6, sticky="w")
 
         ttk.Label(options, text="Seed").grid(row=1, column=0, sticky="w", pady=(8, 0))
         ttk.Entry(options, textvariable=self.seed_var, width=12).grid(row=1, column=1, sticky="w", pady=(8, 0))
-        ttk.Checkbutton(options, text="Burn subtitle vao video", variable=self.burn_subtitles_var).grid(
+        ttk.Checkbutton(options, text="Gắn phụ đề vào video", variable=self.burn_subtitles_var).grid(
             row=1, column=3, columnspan=2, sticky="w", pady=(8, 0)
         )
-        ttk.Checkbutton(options, text="Tao project CapCut", variable=self.create_capcut_project_var).grid(
+        ttk.Checkbutton(options, text="Tạo project CapCut", variable=self.create_capcut_project_var).grid(
             row=1, column=5, columnspan=3, sticky="w", pady=(8, 0)
         )
-        ttk.Checkbutton(options, text="Dung GPU", variable=self.use_gpu_var).grid(
+        ttk.Checkbutton(options, text="Dùng GPU", variable=self.use_gpu_var).grid(
             row=2, column=0, columnspan=2, sticky="w", pady=(8, 0)
         )
-        ttk.Checkbutton(options, text="Chi lay video 16:9", variable=self.only_16x9_var).grid(
+        self.only_16x9_check = ttk.Checkbutton(options, text="Chỉ lấy video 16:9", variable=self.only_16x9_var)
+        self.only_16x9_check.grid(
             row=2, column=1, columnspan=3, sticky="w", pady=(8, 0)
         )
-        ttk.Checkbutton(options, text="Import SRT vao CapCut", variable=self.import_srt_var).grid(
+        ttk.Checkbutton(options, text="Import SRT vào CapCut", variable=self.import_srt_var).grid(
             row=3, column=0, columnspan=3, sticky="w", pady=(8, 0)
         )
-        ttk.Checkbutton(options, text="Tiep tuc clip da tao", variable=self.resume_project_var).grid(
+        ttk.Checkbutton(options, text="Tiếp tục clip đã tạo", variable=self.resume_project_var).grid(
             row=3, column=3, columnspan=3, sticky="w", pady=(8, 0)
         )
-        ttk.Checkbutton(options, text="Mo CapCut sau khi xong", variable=self.open_capcut_var).grid(
+        ttk.Checkbutton(options, text="Mở CapCut sau khi xong", variable=self.open_capcut_var).grid(
             row=2, column=3, columnspan=4, sticky="w", pady=(8, 0)
         )
 
+        self.pexels_frame = ttk.Frame(root)
+        self.pexels_frame.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(0, 8))
+        self.pexels_frame.columnconfigure(1, weight=1)
+        ttk.Label(self.pexels_frame, text="Từ khóa").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 6))
+        ttk.Entry(self.pexels_frame, textvariable=self.pexels_query_var, width=24).grid(
+            row=0, column=1, sticky="ew", pady=(0, 6)
+        )
+        ttk.Label(self.pexels_frame, text="Luồng tải").grid(row=0, column=2, sticky="e", padx=(16, 8), pady=(0, 6))
+        ttk.Entry(self.pexels_frame, textvariable=self.pexels_threads_var, width=8).grid(
+            row=0, column=3, sticky="w", pady=(0, 6)
+        )
+        ttk.Label(self.pexels_frame, text="API key").grid(row=1, column=0, sticky="w", padx=(0, 8))
+        ttk.Entry(self.pexels_frame, textvariable=self.pexels_api_key_var, show="*", width=34).grid(
+            row=1, column=1, columnspan=3, sticky="ew"
+        )
+
         actions = ttk.Frame(root)
-        actions.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(10, 8))
+        actions.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(10, 8))
         actions.columnconfigure(0, weight=1)
         self.progress = ttk.Progressbar(actions, mode="determinate")
         self.progress.grid(row=0, column=0, sticky="ew", padx=(0, 12))
         ttk.Label(actions, textvariable=self.percent_var, width=6, anchor="e").grid(
             row=0, column=1, sticky="e", padx=(0, 12)
         )
-        self.start_button = ttk.Button(actions, text="Tao video", command=self.start)
+        self.start_button = ttk.Button(actions, text="Tạo video", command=self.start)
         self.start_button.grid(row=0, column=2)
 
         ttk.Label(root, textvariable=self.status_var).grid(
-            row=6, column=0, columnspan=3, sticky="w", pady=(0, 8)
+            row=8, column=0, columnspan=3, sticky="w", pady=(0, 8)
         )
 
         self.log = tk.Text(root, height=14, wrap="word")
-        self.log.grid(row=7, column=0, columnspan=3, sticky="nsew")
-        root.rowconfigure(7, weight=1)
+        self.log.grid(row=9, column=0, columnspan=3, sticky="nsew")
+        root.rowconfigure(9, weight=1)
+        self.update_source_ui()
 
     def _path_row(self, parent: ttk.Frame, row: int, label: str, variable: tk.StringVar, command) -> None:
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=5)
         ttk.Entry(parent, textvariable=variable).grid(row=row, column=1, sticky="ew", padx=8, pady=5)
-        ttk.Button(parent, text="Chon", command=command).grid(row=row, column=2, sticky="ew", pady=5)
+        ttk.Button(parent, text="Chọn", command=command).grid(row=row, column=2, sticky="ew", pady=5)
+
+    def update_source_ui(self) -> None:
+        use_pexels = self.source_var.get() == "pexels"
+        self.use_pexels_var.set(use_pexels)
+        if use_pexels:
+            self.only_16x9_var.set(True)
+            self.only_16x9_check.configure(state="disabled")
+            self.folder_row.grid_remove()
+            self.pexels_frame.grid()
+        else:
+            self.only_16x9_check.configure(state="normal")
+            self.folder_row.grid()
+            self.pexels_frame.grid_remove()
 
     def pick_srt(self) -> None:
         path = filedialog.askopenfilename(filetypes=[("SRT subtitles", "*.srt"), ("All files", "*.*")])
@@ -185,12 +257,18 @@ class CapCutVideoApp(tk.Tk):
     def set_status(self, text: str) -> None:
         self.status_var.set(text)
 
+    def save_pexels_config(self) -> None:
+        self.config_data["pexels_api_key"] = self.pexels_api_key_var.get().strip()
+        self.config_data["pexels_query"] = self.pexels_query_var.get().strip()
+        self.config_data["pexels_threads"] = self.pexels_threads_var.get().strip()
+        save_app_config(self.config_data)
+
     def start(self) -> None:
         if self.worker and self.worker.is_alive():
             return
         self.start_button.configure(state="disabled")
         self.percent_var.set("0%")
-        self.status_var.set("Dang bat dau...")
+        self.status_var.set("Đang bắt đầu...")
         self.log.delete("1.0", "end")
         self.worker = threading.Thread(target=self.create_video, daemon=True)
         self.worker.start()
@@ -215,7 +293,7 @@ class CapCutVideoApp(tk.Tk):
             source = random.choice(videos)
             self.ui(
                 self.write_log,
-                f"[{index + 1}/{clip_count}] {source.name}" + (f" thu lai {attempt}" if attempt > 1 else ""),
+                f"[{index + 1}/{clip_count}] {source.name}" + (f" thử lại {attempt}" if attempt > 1 else ""),
             )
             try:
                 create_clip(
@@ -232,7 +310,7 @@ class CapCutVideoApp(tk.Tk):
                 last_error = exc
                 clip_path.unlink(missing_ok=True)
                 if encoder != "libx264":
-                    self.ui(self.write_log, f"GPU encoder loi, thu lai bang CPU: {exc}")
+                    self.ui(self.write_log, f"GPU encoder lỗi, thử lại bằng CPU: {exc}")
                     create_clip(
                         source,
                         clip_path,
@@ -243,8 +321,8 @@ class CapCutVideoApp(tk.Tk):
                     )
                     validate_video_file(clip_path)
                     return
-                self.ui(self.write_log, f"Bo qua clip loi tu {source.name}: {exc}")
-        raise RuntimeError(f"Khong tao duoc clip hop le sau 10 lan thu: {last_error}")
+                self.ui(self.write_log, f"Bỏ qua clip lỗi từ {source.name}: {exc}")
+        raise RuntimeError(f"Không tạo được clip hợp lệ sau 10 lần thử: {last_error}")
 
     def create_video(self) -> None:
         try:
@@ -263,26 +341,46 @@ class CapCutVideoApp(tk.Tk):
             if seed_text:
                 random.seed(int(seed_text))
             if not srt.is_file():
-                raise ValueError(f"Khong tim thay file SRT: {srt}")
-            if not video_folder.is_dir():
-                raise ValueError(f"Khong tim thay folder video: {video_folder}")
+                raise ValueError(f"Không tìm thấy file SRT: {srt}")
+            use_pexels = bool(self.use_pexels_var.get())
+            if not use_pexels and not video_folder.is_dir():
+                raise ValueError(f"Không tìm thấy folder video: {video_folder}")
             if clip_length <= 0:
-                raise ValueError("Moi clip phai lon hon 0 giay")
+                raise ValueError("Mỗi clip phải lớn hơn 0 giây")
 
-            self.ui(self.set_status, "Dang doc file SRT...")
+            self.ui(self.set_status, "Đang đọc file SRT...")
             duration = srt_duration(srt)
             clip_count = math.ceil(duration / clip_length)
-            only_16x9 = bool(self.only_16x9_var.get())
+            only_16x9 = True if use_pexels else bool(self.only_16x9_var.get())
+            if use_pexels:
+                self.save_pexels_config()
+                video_folder = Path.cwd() / "pexels_downloads" / srt.stem
+                video_folder.mkdir(parents=True, exist_ok=True)
+                pexels_threads = min(10, max(1, int(self.pexels_threads_var.get())))
+                self.ui(self.set_status, "Đang tải video từ Pexels...")
+                self.ui(self.write_log, f"Pexels: cần {clip_count} video 16:9 theo thời lượng SRT, tải {pexels_threads} luồng.")
+                downloaded = download_pexels_videos(
+                    api_key=self.pexels_api_key_var.get(),
+                    query=self.pexels_query_var.get(),
+                    output_dir=video_folder,
+                    target_count=clip_count,
+                    only_16x9=True,
+                    target_width=width,
+                    target_height=height,
+                    max_workers=pexels_threads,
+                    progress=lambda text: (self.ui(self.set_status, text), self.ui(self.write_log, text)),
+                )
+                self.ui(self.write_log, f"Đã sẵn sàng {len(downloaded)} video Pexels tại: {video_folder}")
             self.ui(
                 self.set_status,
-                "Dang loc video ngang 16:9..." if only_16x9 else "Dang doc danh sach video...",
+                "Đang lọc video ngang 16:9..." if only_16x9 else "Đang đọc danh sách video...",
             )
 
             def scan_progress(index: int, total: int, path: Path) -> None:
                 if only_16x9:
-                    text = f"Dang loc video 16:9: {index}/{total} - {path.name}"
+                    text = f"Đang lọc video 16:9: {index}/{total} - {path.name}"
                 else:
-                    text = f"Dang doc video: {index}/{total} - {path.name}"
+                    text = f"Đang đọc video: {index}/{total} - {path.name}"
                 self.ui(self.set_status, text)
 
             videos = collect_videos(video_folder, only_16x9=only_16x9, progress=scan_progress)
@@ -296,7 +394,7 @@ class CapCutVideoApp(tk.Tk):
             project_folder = None
             resume_manifest_path: Path | None = None
             if self.create_capcut_project_var.get():
-                self.ui(self.set_status, "Dang tao project CapCut truc tiep...")
+                self.ui(self.set_status, "Đang tạo project CapCut trực tiếp...")
                 resume_enabled = bool(self.resume_project_var.get())
                 project_folder = prepare_capcut_project(srt.stem, resume=resume_enabled)
                 clips_output_dir = project_folder / "Resources" / "auto_clips"
@@ -307,6 +405,10 @@ class CapCutVideoApp(tk.Tk):
                 resume_config = {
                     "srt": str(srt),
                     "video_folder": str(video_folder),
+                    "source": "pexels" if use_pexels else "folder",
+                    "pexels_query": self.pexels_query_var.get().strip() if use_pexels else "",
+                    "pexels_target_count": clip_count if use_pexels else "",
+                    "pexels_threads": self.pexels_threads_var.get().strip() if use_pexels else "",
                     "duration": round(duration, 6),
                     "clip_count": clip_count,
                     "clip_length": clip_length,
@@ -323,14 +425,14 @@ class CapCutVideoApp(tk.Tk):
                     except Exception:
                         old_config = None
                 if resume_enabled and old_config and old_config != resume_config:
-                    self.ui(self.write_log, "Cau hinh da thay doi, xoa clip tam cu va tao lai tu dau.")
+                    self.ui(self.write_log, "Cấu hình đã thay đổi, xóa clip tạm cũ và tạo lại từ đầu.")
                     shutil.rmtree(clips_output_dir, ignore_errors=True)
                     clips_output_dir.mkdir(parents=True, exist_ok=True)
                 resume_manifest_path.write_text(json.dumps(resume_config, ensure_ascii=False, indent=2), encoding="utf-8")
                 self.ui(self.write_log, f"Project CapCut: {project_folder}")
                 if resume_enabled:
-                    self.ui(self.write_log, "Da bat tiep tuc: clip nao da tao hop le se duoc bo qua.")
-                self.ui(self.write_log, "Tool tu tao project, khong can vao CapCut tao du an trong.")
+                    self.ui(self.write_log, "Đã bật tiếp tục: clip nào đã tạo hợp lệ sẽ được bỏ qua.")
+                self.ui(self.write_log, "Tool tự tạo project, không cần vào CapCut tạo dự án trống.")
             else:
                 clips_output_dir = output.with_suffix("")
                 clips_output_dir = clips_output_dir.parent / f"{clips_output_dir.name}_clips"
@@ -353,14 +455,14 @@ class CapCutVideoApp(tk.Tk):
                     percent = round((index / (clip_count + 1)) * 100)
                     self.ui(
                         self.set_status,
-                        f"Dang tao clip {index + 1}/{clip_count} - {current_clip_length:.2f}s ({percent}%)",
+                        f"Đang tạo clip {index + 1}/{clip_count} - {current_clip_length:.2f}s ({percent}%)",
                     )
                     reused_clip = False
                     if self.create_capcut_project_var.get() and self.resume_project_var.get() and clip_path.is_file():
                         try:
                             validate_video_file(clip_path)
                             reused_clip = True
-                            self.ui(self.write_log, f"[{index + 1}/{clip_count}] Da co, bo qua: {clip_path.name}")
+                            self.ui(self.write_log, f"[{index + 1}/{clip_count}] Đã có, bỏ qua: {clip_path.name}")
                         except Exception:
                             clip_path.unlink(missing_ok=True)
                     if not reused_clip:
@@ -380,25 +482,25 @@ class CapCutVideoApp(tk.Tk):
 
                 if self.burn_subtitles_var.get():
                     raw_output = temp_path / "joined_without_subtitles.mp4"
-                    self.ui(self.set_status, "Dang ghep video...")
+                    self.ui(self.set_status, "Đang ghép video...")
                     concat_clips(clips, raw_output, duration)
-                    self.ui(self.write_log, "Dang burn subtitle...")
-                    self.ui(self.set_status, "Dang burn subtitle vao video...")
+                    self.ui(self.write_log, "Đang gắn phụ đề...")
+                    self.ui(self.set_status, "Đang gắn phụ đề vào video...")
                     burn_subtitles(raw_output, srt, output, width, height, encoder)
                     output_created = True
                 elif not self.create_capcut_project_var.get():
-                    self.ui(self.write_log, "Dang ghep video...")
-                    self.ui(self.set_status, "Dang ghep video...")
+                    self.ui(self.write_log, "Đang ghép video...")
+                    self.ui(self.set_status, "Đang ghép video...")
                     concat_clips(clips, output, duration)
                     output_created = True
                 else:
-                    self.ui(self.write_log, "Bo qua ghep output.mp4 vi dang tao project CapCut co clip rieng le.")
+                    self.ui(self.write_log, "Bỏ qua ghép output.mp4 vì đang tạo project CapCut có clip riêng lẻ.")
 
             self.ui(self.set_progress, clip_count + 1, clip_count + 1)
             if len(clips) != clip_count:
                 raise RuntimeError(f"So clip tao duoc khong du: {len(clips)}/{clip_count}")
             if self.create_capcut_project_var.get():
-                self.ui(self.set_status, "Dang tao project CapCut...")
+                self.ui(self.set_status, "Đang tạo project CapCut...")
                 project = create_capcut_project_from_clips(
                     clips,
                     project_name=srt.stem,
@@ -410,17 +512,17 @@ class CapCutVideoApp(tk.Tk):
                     backup_project=False,
                 )
                 (project / ".auto_resume.json").unlink(missing_ok=True)
-                self.ui(self.write_log, f"Da tao project CapCut: {project}")
-            self.ui(self.set_status, "Hoan tat 100%")
+                self.ui(self.write_log, f"Đã tạo project CapCut: {project}")
+            self.ui(self.set_status, "Hoàn tất 100%")
             if output_created:
                 self.ui(self.write_log, f"Xong: {output}")
-            self.ui(self.write_log, f"Clip rieng le: {clips_output_dir}")
+            self.ui(self.write_log, f"Clip riêng lẻ: {clips_output_dir}")
             self.open_result(output)
-            done_text = f"Da tao project CapCut:\n{project}" if self.create_capcut_project_var.get() else f"Da tao video:\n{output}"
-            self.ui(messagebox.showinfo, "Hoan tat", done_text)
+            done_text = f"Đã tạo project CapCut:\n{project}" if self.create_capcut_project_var.get() else f"Đã tạo video:\n{output}"
+            self.ui(messagebox.showinfo, "Hoàn tất", done_text)
         except Exception as exc:
-            self.ui(self.write_log, f"Loi: {exc}")
-            self.ui(messagebox.showerror, "Loi", str(exc))
+            self.ui(self.write_log, f"Lỗi: {exc}")
+            self.ui(messagebox.showerror, "Lỗi", str(exc))
         finally:
             self.ui(self.start_button.configure, {"state": "normal"})
 

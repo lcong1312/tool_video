@@ -169,7 +169,9 @@ def collect_videos(folder: Path, *, only_16x9: bool = True, progress=None) -> li
         if not only_16x9 or _keep_16x9(item, skipped):
             videos.append(item)
     if not videos:
-        raise SystemExit(f"No 16:9 horizontal videos found in {folder}")
+        if only_16x9:
+            raise SystemExit(f"No 16:9 horizontal videos found in {folder}")
+        raise SystemExit(f"No supported videos found in {folder}")
     for name in skipped:
         print(f"Skip non-16:9: {name}")
     return videos
