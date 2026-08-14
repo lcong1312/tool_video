@@ -26,6 +26,16 @@ Nếu trong folder tool có sẵn thư mục `bin` chứa:
 
 thì tool sẽ ưu tiên dùng bộ FFmpeg này. 
 
+Tool không bắt buộc phải cài Auto Capcut Pro. Khi copy sang máy khác, chỉ cần copy cả folder tool, bao gồm file `acp_build_project.py` và thư mục `bin`.
+
+Nếu trong folder có thư mục:
+
+```text
+vendor/auto_capcut_pro
+```
+
+thì tool sẽ ưu tiên dùng builder portable trong đó. Vì vậy khi nén hoặc copy sang máy khác, hãy copy cả thư mục `vendor` để không bị thiếu builder.
+
 ## Cách dùng giao diện
 
 Sau khi mở giao diện:
@@ -140,7 +150,8 @@ python .\make_capcut_video.py .\subtitle.srt .\videos -o .\output.mp4 --seed 123
 - Nên đóng các project CapCut đang mở trước khi tạo project mới.
 - Nếu project cũ tạo lỗi, hãy xóa project đó trong CapCut rồi tạo lại bằng bản tool mới.
 - Không nên đổi tên hoặc di chuyển folder project trong `com.lveditor.draft` bằng tay.
-- Nếu copy tool sang máy khác, hãy copy cả thư mục `bin` để FFmpeg đi kèm.
+- Nếu copy tool sang máy khác, hãy copy cả thư mục `bin` để FFmpeg đi kèm và thư mục `vendor` để builder CapCut đi kèm.
+- Máy đích cần cài CapCut. Nếu máy đó chưa từng có project CapCut nào, hãy mở CapCut, bấm `Tạo dự án` một lần, sau đó đóng tab edit rồi chạy lại tool để tool lấy schema project mẫu.
 - Folder video có thể chứa cả video ngang và dọc, tool sẽ tự lọc chỉ lấy video ngang 16:9.
 
 ## Khi gặp lỗi

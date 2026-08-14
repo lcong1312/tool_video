@@ -11,22 +11,20 @@ import urllib.request
 from pathlib import Path
 
 
-ACP_ROOT = Path(r"C:\Program Files\Auto Capcut Pro")
+APP_DIR = Path(__file__).resolve().parent
+LOCAL_ACP_ROOT = APP_DIR / "vendor" / "auto_capcut_pro"
+SYSTEM_ACP_ROOT = Path(r"C:\Program Files\Auto Capcut Pro")
+ACP_ROOT = LOCAL_ACP_ROOT if LOCAL_ACP_ROOT.is_dir() else SYSTEM_ACP_ROOT
 CAPMATE_ROOT = ACP_ROOT / "capcut-mate"
 TEMPLATE_DIR = CAPMATE_ROOT / "template" / "default2"
 CAPCUT_DRAFT_ROOT = Path.home() / "AppData/Local/CapCut/User Data/Projects/com.lveditor.draft"
 BUILD_ROOT = CAPCUT_DRAFT_ROOT / ".building_projects"
 APP_BIN = Path(__file__).resolve().parent / "bin"
-APP_DIR = Path(__file__).resolve().parent
 
 if str(APP_DIR) not in sys.path:
     sys.path.insert(0, str(APP_DIR))
-sys.path.insert(0, str(CAPMATE_ROOT))
-
-import src.pyJianYingDraft as draft  # noqa: E402
-from src.pyJianYingDraft import ScriptFile, TrackType, trange  # noqa: E402
-from src.pyJianYingDraft.local_materials import VideoMaterial  # noqa: E402
-from src.pyJianYingDraft.video_segment import VideoSegment  # noqa: E402
+if CAPMATE_ROOT.is_dir():
+    sys.path.insert(0, str(CAPMATE_ROOT))
 
 
 REAL_TEMPLATE_NAME = "0813 (5)"
@@ -139,7 +137,12 @@ def find_capcut_template() -> Path:
             candidates.append((1 if is_blank else 0, clean_bonus, folder.stat().st_mtime, folder))
     if candidates:
         return max(candidates, key=lambda item: (item[0], item[1], item[2]))[3]
-    return TEMPLATE_DIR
+    if TEMPLATE_DIR.is_dir():
+        return TEMPLATE_DIR
+    raise RuntimeError(
+        "Khong tim thay project CapCut mau tren may nay. "
+        "Hay mo CapCut, bam Tao du an moi mot lan, dong tab edit neu can, roi chay lai tool."
+    )
 
 
 def create_cover(video: Path, project_folder: Path) -> None:

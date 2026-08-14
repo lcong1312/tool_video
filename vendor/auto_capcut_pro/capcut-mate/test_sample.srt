@@ -1,0 +1,19 @@
+1
+00:00:00,000 --> 00:00:03,000
+Welcome to nature
+
+2
+00:00:03,000 --> 00:00:06,000
+Beautiful mountains ahead
+
+3
+00:00:06,000 --> 00:00:09,000
+Feel the fresh air
+
+4
+00:00:09,000 --> 00:00:12,000
+Adventure awaits you
+
+5
+00:00:12,000 --> 00:00:16,000
+Explore the wild

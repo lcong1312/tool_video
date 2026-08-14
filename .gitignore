@@ -31,6 +31,13 @@ joined_without_subtitles.mp4
 !bin/ffprobe.exe
 !bin/ffplay.exe
 
+# Keep local CapCut builder bundle for portable copies.
+!vendor/
+!vendor/auto_capcut_pro/
+!vendor/auto_capcut_pro/python/
+!vendor/auto_capcut_pro/capcut-mate/
+!vendor/auto_capcut_pro/**
+
 # Temporary/build folders
 tmp/
 temp/
@@ -50,3 +57,7 @@ desktop.ini
 
 # PowerShell / installer scratch files
 tools/ffmpeg/
+
+# Always keep the portable CapCut builder bundle complete.
+!vendor/
+!vendor/**

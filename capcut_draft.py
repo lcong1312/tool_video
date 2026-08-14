@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import copy
 import shutil
+import sys
 import time
 import uuid
 import subprocess
@@ -12,9 +13,19 @@ from pathlib import Path
 from make_capcut_video import ffprobe_duration, ffprobe_video_size, run
 
 
+APP_DIR = Path(__file__).resolve().parent
 CAPCUT_DRAFT_ROOT = Path.home() / "AppData/Local/CapCut/User Data/Projects/com.lveditor.draft"
+LOCAL_ACP_PYTHON = APP_DIR / "vendor" / "auto_capcut_pro" / "python" / "python.exe"
 ACP_PYTHON = Path(r"C:\Program Files\Auto Capcut Pro\python\python.exe")
 ACP_HELPER = Path(__file__).with_name("acp_build_project.py")
+
+
+def _builder_python() -> str:
+    if LOCAL_ACP_PYTHON.is_file():
+        return str(LOCAL_ACP_PYTHON)
+    if ACP_PYTHON.is_file():
+        return str(ACP_PYTHON)
+    return sys.executable
 
 
 def _json_files(folder: Path) -> list[Path]:
@@ -677,7 +688,7 @@ def create_capcut_project_from_clips(
         if not clip.is_file():
             raise RuntimeError(f"Khong tim thay clip: {clip}")
 
-    if ACP_PYTHON.is_file() and ACP_HELPER.is_file():
+    if ACP_HELPER.is_file():
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as handle:
             request_path = Path(handle.name)
             json.dump(
@@ -697,7 +708,7 @@ def create_capcut_project_from_clips(
             )
         try:
             result = subprocess.run(
-                [str(ACP_PYTHON), str(ACP_HELPER), str(request_path)],
+                [_builder_python(), str(ACP_HELPER), str(request_path)],
                 check=True,
                 text=True,
                 stdout=subprocess.PIPE,
@@ -748,8 +759,8 @@ def create_capcut_project_from_clips(
 
 
 def prepare_capcut_project(project_name: str, resume: bool = False) -> Path:
-    if not (ACP_PYTHON.is_file() and ACP_HELPER.is_file()):
-        raise RuntimeError("Khong tim thay Auto Capcut Pro builder de tao project truoc.")
+    if not ACP_HELPER.is_file():
+        raise RuntimeError(f"Khong tim thay file builder: {ACP_HELPER}")
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as handle:
         request_path = Path(handle.name)
         json.dump(
@@ -759,7 +770,7 @@ def prepare_capcut_project(project_name: str, resume: bool = False) -> Path:
         )
     try:
         result = subprocess.run(
-            [str(ACP_PYTHON), str(ACP_HELPER), str(request_path)],
+            [_builder_python(), str(ACP_HELPER), str(request_path)],
             check=True,
             text=True,
             stdout=subprocess.PIPE,
