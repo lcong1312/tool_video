@@ -13,6 +13,23 @@ from typing import Callable, Any
 
 
 PEXELS_API_BASE = "https://api.pexels.com/v1/videos"
+FALLBACK_QUERIES = [
+    "nature",
+    "landscape",
+    "city",
+    "travel",
+    "people",
+    "business",
+    "technology",
+    "food",
+    "ocean",
+    "mountain",
+    "forest",
+    "street",
+    "lifestyle",
+    "background",
+    "cinematic",
+]
 
 
 def safe_name(value: str) -> str:
@@ -109,6 +126,26 @@ def _search_url(query: str, *, page: int, per_page: int, only_16x9: bool) -> str
     return f"{PEXELS_API_BASE}/popular?{urllib.parse.urlencode(params)}"
 
 
+def _query_plan(query: str) -> list[str]:
+    terms: list[str] = []
+    seen: set[str] = set()
+
+    def add(term: str) -> None:
+        clean = term.strip()
+        key = clean.casefold()
+        if key in seen:
+            return
+        seen.add(key)
+        terms.append(clean)
+
+    if query.strip():
+        add(query)
+    for fallback in FALLBACK_QUERIES:
+        add(fallback)
+    add("")
+    return terms
+
+
 def download_pexels_videos(
     *,
     api_key: str,
@@ -147,41 +184,59 @@ def download_pexels_videos(
 
     result_paths = list(valid_existing)
     seen_ids = {path.stem for path in result_paths}
-    page = 1
     per_page = 80
     candidates: list[tuple[Path, dict[str, Any], dict[str, Any]]] = []
-    max_pages = min(100, max(10, (target_count // per_page) + 6))
+    max_pages_per_query = min(20, max(3, (target_count // per_page) + 3))
 
-    while len(result_paths) + len(candidates) < target_count and page <= max_pages:
-        url = _search_url(query, page=page, per_page=per_page, only_16x9=only_16x9)
-        if progress:
-            progress(f"Dang goi Pexels API trang {page}...")
-        data, headers = _request_json(url, api_key)
-        remaining = headers.get("X-Ratelimit-Remaining")
-        if remaining and progress:
-            progress(f"Pexels API con lai: {remaining} request")
-        videos = data.get("videos") or []
-        if not videos:
+    for search_query in _query_plan(query):
+        if len(result_paths) + len(candidates) >= target_count:
             break
+        if progress:
+            if search_query:
+                progress(f'Dang tim Pexels tu khoa "{search_query}"...')
+            else:
+                progress("Dang tim video pho bien tren Pexels...")
 
-        for video in videos:
-            if len(result_paths) + len(candidates) >= target_count:
+        page = 1
+        added_before = len(candidates)
+        while len(result_paths) + len(candidates) < target_count and page <= max_pages_per_query:
+            url = _search_url(search_query, page=page, per_page=per_page, only_16x9=only_16x9)
+            if progress:
+                label = search_query or "popular"
+                progress(f'Dang goi Pexels API "{label}" trang {page}...')
+            data, headers = _request_json(url, api_key)
+            remaining = headers.get("X-Ratelimit-Remaining")
+            if remaining and progress:
+                progress(f"Pexels API con lai: {remaining} request")
+            videos = data.get("videos") or []
+            if not videos:
                 break
-            chosen = _best_video_file(video, only_16x9=only_16x9, target_width=target_width, target_height=target_height)
-            if not chosen:
-                continue
-            video_id = str(video.get("id") or "")
-            file_id = str(chosen.get("id") or "")
-            stem = safe_name(f"pexels_{video_id}_{file_id}_{chosen.get('width')}x{chosen.get('height')}")
-            if stem in seen_ids:
-                continue
-            seen_ids.add(stem)
-            target = output_dir / f"{stem}.mp4"
-            if target.is_file() and target.stat().st_size > 1024:
-                result_paths.append(target)
-                continue
-            candidates.append((target, chosen, video))
-        page += 1
+
+            for video in videos:
+                if len(result_paths) + len(candidates) >= target_count:
+                    break
+                chosen = _best_video_file(video, only_16x9=only_16x9, target_width=target_width, target_height=target_height)
+                if not chosen:
+                    continue
+                video_id = str(video.get("id") or "")
+                file_id = str(chosen.get("id") or "")
+                stem = safe_name(f"pexels_{video_id}_{file_id}_{chosen.get('width')}x{chosen.get('height')}")
+                if stem in seen_ids:
+                    continue
+                seen_ids.add(stem)
+                target = output_dir / f"{stem}.mp4"
+                if target.is_file() and target.stat().st_size > 1024:
+                    result_paths.append(target)
+                    continue
+                candidates.append((target, chosen, video))
+            page += 1
+
+        if progress:
+            added = len(candidates) - added_before
+            found_total = len(result_paths) + len(candidates)
+            if found_total < target_count:
+                label = search_query or "popular"
+                progress(f'"{label}" them duoc {added} video; chua du {target_count}, tu dong thu nguon khac...')
 
     needed = target_count - len(result_paths)
     candidates = candidates[:needed]
@@ -238,5 +293,12 @@ def download_pexels_videos(
                 meta_path.write_text(json.dumps(attribution, ensure_ascii=False, indent=2), encoding="utf-8")
 
     if len(result_paths) < target_count:
-        raise RuntimeError(f"Pexels chi tai duoc {len(result_paths)}/{target_count} video phu hop.")
+        if not result_paths:
+            raise RuntimeError("Pexels khong tim thay video 16:9 phu hop nao.")
+        if progress:
+            progress(
+                f"Pexels chi tai duoc {len(result_paths)}/{target_count} video 16:9; "
+                "tool se dung lai cac video da co de tao du timeline."
+            )
+        return result_paths
     return result_paths[:target_count]
