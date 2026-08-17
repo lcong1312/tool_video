@@ -1063,6 +1063,7 @@ def build_content_from_real_schema(
     height: int,
     clip_durations: list[float] | None = None,
     srt_path: Path | None = None,
+    audio_path: Path | None = None,
 ) -> tuple[dict, int]:
     from make_capcut_video import ffprobe_duration, ffprobe_video_size
 
@@ -1179,6 +1180,73 @@ def build_content_from_real_schema(
 
     content["tracks"] = [track]
     content["duration"] = cursor_us
+    if audio_path and audio_path.is_file():
+        audio_duration_us = int(ffprobe_duration(audio_path) * 1_000_000)
+        audio_material_id = new_id()
+        audio_speed_id = new_id()
+        materials.setdefault("audios", []).append(
+            {
+                "app_id": 0,
+                "category_id": "",
+                "category_name": "local",
+                "check_flag": 3,
+                "copyright_limit_type": "none",
+                "duration": audio_duration_us,
+                "effect_id": "",
+                "formula_id": "",
+                "id": audio_material_id,
+                "local_material_id": audio_material_id,
+                "music_id": audio_material_id,
+                "name": audio_path.name,
+                "path": capcut_path(audio_path),
+                "source_platform": 0,
+                "type": "extract_music",
+                "wave_points": [],
+            }
+        )
+        materials.setdefault("speeds", []).append(
+            {"id": audio_speed_id, "type": "speed", "mode": 0, "speed": 1.0, "curve_speed": None}
+        )
+        content["tracks"].append(
+            {
+                "id": new_id(),
+                "type": "audio",
+                "segments": [
+                    {
+                        "id": new_id(),
+                        "material_id": audio_material_id,
+                        "source_timerange": {"start": 0, "duration": audio_duration_us},
+                        "target_timerange": {"start": 0, "duration": audio_duration_us},
+                        "extra_material_refs": [audio_speed_id],
+                        "speed": 1.0,
+                        "volume": 1.0,
+                        "last_nonzero_volume": 1.0,
+                        "is_tone_modify": False,
+                        "reverse": False,
+                        "track_attribute": 0,
+                        "track_render_index": 0,
+                        "visible": True,
+                        "common_keyframes": [],
+                        "keyframe_refs": [],
+                        "enable_adjust": True,
+                        "enable_color_correct_adjust": False,
+                        "enable_color_curves": True,
+                        "enable_color_match_adjust": False,
+                        "enable_color_wheels": True,
+                        "enable_lut": True,
+                        "enable_smart_color_adjust": False,
+                        "clip": None,
+                        "hdr_settings": None,
+                    }
+                ],
+                "flag": 0,
+                "attribute": 0,
+                "name": "VOICEVOX",
+                "is_default_name": False,
+            }
+        )
+        content["duration"] = max(content["duration"], audio_duration_us)
+        cursor_us = content["duration"]
     if srt_path and srt_path.is_file():
         add_srt_to_content(content, srt_path)
         cue_end = 0
@@ -1658,6 +1726,7 @@ def build_project(
     height: int,
     clip_durations: list[float] | None = None,
     srt_path: Path | None = None,
+    audio_path: Path | None = None,
     project_folder: Path | None = None,
     clips_are_internal: bool = False,
     legacy_mode: bool = False,
@@ -1677,6 +1746,13 @@ def build_project(
         shutil.rmtree(timelines_dir)
     media_dir = project_folder / "Resources" / "auto_clips"
     media_dir.mkdir(parents=True, exist_ok=True)
+    audio_dir = project_folder / "Resources" / "auto_audio"
+    project_audio = None
+    if audio_path and audio_path.is_file():
+        audio_dir.mkdir(parents=True, exist_ok=True)
+        project_audio = audio_dir / audio_path.name
+        if audio_path.resolve() != project_audio.resolve():
+            shutil.copy2(audio_path, project_audio)
     if clips_are_internal:
         project_clips = clips
     elif not copy_media:
@@ -1691,6 +1767,8 @@ def build_project(
     if BUILD_ROOT == project_folder.parent:
         project_folder = promote_build_folder(project_folder, project_name)
         project_clips = sorted((project_folder / "Resources" / "auto_clips").glob("*.mp4"))
+        if project_audio:
+            project_audio = project_folder / "Resources" / "auto_audio" / project_audio.name
         timelines_dir = project_folder / "Timelines"
 
     base_content = load_json(project_folder / "draft_content.json")
@@ -1701,6 +1779,7 @@ def build_project(
         height,
         clip_durations=clip_durations,
         srt_path=srt_path,
+        audio_path=project_audio,
     )
     if normalize_paths:
         content = normalize_json_paths(content)
@@ -1759,6 +1838,7 @@ def main() -> int:
         height=int(request.get("height", 1080)),
         clip_durations=[float(item) for item in request.get("clip_durations", [])],
         srt_path=Path(request["srt_path"]) if request.get("srt_path") else None,
+        audio_path=Path(request["audio_path"]) if request.get("audio_path") else None,
         project_folder=Path(request["project_folder"]) if request.get("project_folder") else None,
         clips_are_internal=bool(request.get("clips_are_internal", False)),
         legacy_mode=bool(request.get("legacy_mode", False)),

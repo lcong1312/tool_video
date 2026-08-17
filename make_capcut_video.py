@@ -262,6 +262,32 @@ def concat_clips(clips: list[Path], output: Path, duration: float | None) -> Non
     list_file.unlink(missing_ok=True)
 
 
+def mux_audio(video: Path, audio: Path, output: Path, duration: float | None = None) -> None:
+    command = [
+        "ffmpeg",
+        "-y",
+        "-i",
+        str(video),
+        "-i",
+        str(audio),
+        "-map",
+        "0:v:0",
+        "-map",
+        "1:a:0",
+        "-c:v",
+        "copy",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "192k",
+        "-shortest",
+    ]
+    if duration:
+        command.extend(["-t", f"{duration:.3f}"])
+    command.append(str(output))
+    run(command)
+
+
 def burn_subtitles(
     input_video: Path,
     srt: Path,

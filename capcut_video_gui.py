@@ -24,6 +24,7 @@ from make_capcut_video import (
     concat_clips,
     create_clip,
     choose_h264_encoder,
+    mux_audio,
     require_binary,
     srt_duration,
     validate_video_file,
@@ -33,6 +34,7 @@ from capcut_draft import (
     prepare_capcut_project,
 )
 from pexels_downloader import download_pexels_videos
+from voicevox_tts import VoicevoxSettings, synthesize_text_file
 
 
 APP_CONFIG = Path(__file__).with_name("config.json")
@@ -71,11 +73,22 @@ class CapCutVideoApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("SRT to CapCut Video")
-        self.geometry("820x620")
-        self.minsize(780, 580)
+        self.geometry("860x760")
+        self.minsize(820, 720)
         self.config_data = load_app_config()
 
         self.srt_var = tk.StringVar()
+        self.text_var = tk.StringVar(value=str(Path.cwd() / "index.txt"))
+        self.voice_output_var = tk.StringVar(
+            value=str(self.config_data.get("voicevox_output") or Path.cwd() / "voicevox_output" / "voice.wav")
+        )
+        self.use_voicevox_var = tk.BooleanVar(value=False)
+        self.voice_speaker_var = tk.StringVar(value=str(self.config_data.get("voicevox_speaker") or "1"))
+        self.voice_pause_var = tk.StringVar(value=str(self.config_data.get("voicevox_pause_ms") or "300"))
+        self.voice_speed_var = tk.StringVar(value=str(self.config_data.get("voicevox_speed") or "1.0"))
+        self.voice_pitch_var = tk.StringVar(value=str(self.config_data.get("voicevox_pitch") or "0.0"))
+        self.voice_volume_var = tk.StringVar(value=str(self.config_data.get("voicevox_volume") or "1.0"))
+        self.voice_intonation_var = tk.StringVar(value=str(self.config_data.get("voicevox_intonation") or "1.0"))
         self.folder_var = tk.StringVar()
         self.output_var = tk.StringVar(value=str(Path.cwd() / "output.mp4"))
         self.clip_length_var = tk.StringVar(value="3")
@@ -109,8 +122,43 @@ class CapCutVideoApp(tk.Tk):
         root.pack(fill="both", expand=True)
         root.columnconfigure(1, weight=1)
 
+        voice = ttk.LabelFrame(root, text="VOICEVOX")
+        voice.grid(row=0, column=0, columnspan=3, sticky="ew", pady=(0, 10))
+        for index in range(8):
+            voice.columnconfigure(index, weight=1)
+        ttk.Checkbutton(
+            voice,
+            text="Tạo voice + SRT từ text",
+            variable=self.use_voicevox_var,
+            command=self.update_voicevox_ui,
+        ).grid(row=0, column=0, columnspan=2, sticky="w", padx=6, pady=5)
+        ttk.Label(voice, text="Giọng").grid(row=0, column=2, sticky="e", padx=(8, 4))
+        ttk.Entry(voice, textvariable=self.voice_speaker_var, width=8).grid(row=0, column=3, sticky="w")
+        ttk.Label(voice, text="Nghỉ ms").grid(row=0, column=4, sticky="e", padx=(8, 4))
+        ttk.Entry(voice, textvariable=self.voice_pause_var, width=8).grid(row=0, column=5, sticky="w")
+        ttk.Label(voice, text="Tốc độ").grid(row=1, column=0, sticky="e", padx=(6, 4), pady=5)
+        ttk.Entry(voice, textvariable=self.voice_speed_var, width=8).grid(row=1, column=1, sticky="w")
+        ttk.Label(voice, text="Độ cao").grid(row=1, column=2, sticky="e", padx=(8, 4))
+        ttk.Entry(voice, textvariable=self.voice_pitch_var, width=8).grid(row=1, column=3, sticky="w")
+        ttk.Label(voice, text="Âm lượng").grid(row=1, column=4, sticky="e", padx=(8, 4))
+        ttk.Entry(voice, textvariable=self.voice_volume_var, width=8).grid(row=1, column=5, sticky="w")
+        ttk.Label(voice, text="Độ nhấn").grid(row=1, column=6, sticky="e", padx=(8, 4))
+        ttk.Entry(voice, textvariable=self.voice_intonation_var, width=8).grid(row=1, column=7, sticky="w")
+        self.voice_output_row = ttk.Frame(voice)
+        self.voice_output_row.grid(row=2, column=0, columnspan=8, sticky="ew", padx=6, pady=(4, 2))
+        self.voice_output_row.columnconfigure(1, weight=1)
+        ttk.Label(self.voice_output_row, text="Lưu voice/SRT").grid(row=0, column=0, sticky="w", padx=(0, 8))
+        ttk.Entry(self.voice_output_row, textvariable=self.voice_output_var).grid(row=0, column=1, sticky="ew", padx=(0, 8))
+        ttk.Button(self.voice_output_row, text="Chọn", command=self.pick_voice_output).grid(row=0, column=2, sticky="ew")
+        self.voice_text_frame = ttk.Frame(voice)
+        self.voice_text_frame.grid(row=3, column=0, columnspan=8, sticky="ew", padx=6, pady=(4, 6))
+        self.voice_text_frame.columnconfigure(0, weight=1)
+        ttk.Label(self.voice_text_frame, text="Nội dung đọc").grid(row=0, column=0, sticky="w", pady=(0, 4))
+        self.voice_text = tk.Text(self.voice_text_frame, height=5, wrap="word")
+        self.voice_text.grid(row=1, column=0, sticky="ew")
+
         source = ttk.Frame(root)
-        source.grid(row=0, column=0, columnspan=3, sticky="w", pady=(0, 8))
+        source.grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 8))
         ttk.Label(source, text="Nguồn video").pack(side="left", padx=(0, 12))
         ttk.Radiobutton(source, text="Video trong máy", variable=self.source_var, value="local", command=self.update_source_ui).pack(
             side="left", padx=(0, 12)
@@ -119,18 +167,24 @@ class CapCutVideoApp(tk.Tk):
             side="left"
         )
 
-        self._path_row(root, 1, "File SRT", self.srt_var, self.pick_srt)
+        self.srt_row = ttk.Frame(root)
+        self.srt_row.grid(row=2, column=0, columnspan=3, sticky="ew")
+        self.srt_row.columnconfigure(1, weight=1)
+        ttk.Label(self.srt_row, text="File SRT").grid(row=0, column=0, sticky="w", pady=5)
+        ttk.Entry(self.srt_row, textvariable=self.srt_var).grid(row=0, column=1, sticky="ew", padx=8, pady=5)
+        ttk.Button(self.srt_row, text="Chọn", command=self.pick_srt).grid(row=0, column=2, sticky="ew", pady=5)
+        self._path_row(root, 3, "File text", self.text_var, self.pick_text)
         self.folder_row = ttk.Frame(root)
-        self.folder_row.grid(row=2, column=0, columnspan=3, sticky="ew")
+        self.folder_row.grid(row=4, column=0, columnspan=3, sticky="ew")
         self.folder_row.columnconfigure(1, weight=1)
         ttk.Label(self.folder_row, text="Thư mục video").grid(row=0, column=0, sticky="w", pady=5)
         ttk.Entry(self.folder_row, textvariable=self.folder_var).grid(row=0, column=1, sticky="ew", padx=8, pady=5)
         ttk.Button(self.folder_row, text="Chọn", command=self.pick_folder).grid(row=0, column=2, sticky="ew", pady=5)
-        self._path_row(root, 3, "File xuất", self.output_var, self.pick_output)
-        self._path_row(root, 4, "CapCut.exe", self.capcut_var, self.pick_capcut)
+        self._path_row(root, 5, "File xuất", self.output_var, self.pick_output)
+        self._path_row(root, 6, "CapCut.exe", self.capcut_var, self.pick_capcut)
 
         options = ttk.Frame(root)
-        options.grid(row=5, column=0, columnspan=3, sticky="ew", pady=(14, 8))
+        options.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(14, 8))
         for index in range(8):
             options.columnconfigure(index, weight=1)
 
@@ -169,7 +223,7 @@ class CapCutVideoApp(tk.Tk):
         )
 
         self.pexels_frame = ttk.Frame(root)
-        self.pexels_frame.grid(row=6, column=0, columnspan=3, sticky="ew", pady=(0, 8))
+        self.pexels_frame.grid(row=8, column=0, columnspan=3, sticky="ew", pady=(0, 8))
         self.pexels_frame.columnconfigure(1, weight=1)
         ttk.Label(self.pexels_frame, text="Từ khóa").grid(row=0, column=0, sticky="w", padx=(0, 8), pady=(0, 6))
         ttk.Entry(self.pexels_frame, textvariable=self.pexels_query_var, width=24).grid(
@@ -185,7 +239,7 @@ class CapCutVideoApp(tk.Tk):
         )
 
         actions = ttk.Frame(root)
-        actions.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(10, 8))
+        actions.grid(row=9, column=0, columnspan=3, sticky="ew", pady=(10, 8))
         actions.columnconfigure(0, weight=1)
         self.progress = ttk.Progressbar(actions, mode="determinate")
         self.progress.grid(row=0, column=0, sticky="ew", padx=(0, 12))
@@ -196,18 +250,29 @@ class CapCutVideoApp(tk.Tk):
         self.start_button.grid(row=0, column=2)
 
         ttk.Label(root, textvariable=self.status_var).grid(
-            row=8, column=0, columnspan=3, sticky="w", pady=(0, 8)
+            row=10, column=0, columnspan=3, sticky="w", pady=(0, 8)
         )
 
         self.log = tk.Text(root, height=14, wrap="word")
-        self.log.grid(row=9, column=0, columnspan=3, sticky="nsew")
-        root.rowconfigure(9, weight=1)
+        self.log.grid(row=11, column=0, columnspan=3, sticky="nsew")
+        root.rowconfigure(11, weight=1)
         self.update_source_ui()
+        self.update_voicevox_ui()
 
     def _path_row(self, parent: ttk.Frame, row: int, label: str, variable: tk.StringVar, command) -> None:
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=5)
         ttk.Entry(parent, textvariable=variable).grid(row=row, column=1, sticky="ew", padx=8, pady=5)
         ttk.Button(parent, text="Chọn", command=command).grid(row=row, column=2, sticky="ew", pady=5)
+
+    def update_voicevox_ui(self) -> None:
+        if self.use_voicevox_var.get():
+            self.srt_row.grid_remove()
+            self.voice_output_row.grid()
+            self.voice_text_frame.grid()
+        else:
+            self.srt_row.grid()
+            self.voice_output_row.grid_remove()
+            self.voice_text_frame.grid_remove()
 
     def update_source_ui(self) -> None:
         use_pexels = self.source_var.get() == "pexels"
@@ -226,6 +291,20 @@ class CapCutVideoApp(tk.Tk):
         path = filedialog.askopenfilename(filetypes=[("SRT subtitles", "*.srt"), ("All files", "*.*")])
         if path:
             self.srt_var.set(path)
+
+    def pick_text(self) -> None:
+        path = filedialog.askopenfilename(filetypes=[("Text files", "*.txt"), ("All files", "*.*")])
+        if path:
+            self.text_var.set(path)
+
+    def pick_voice_output(self) -> None:
+        path = filedialog.asksaveasfilename(
+            defaultextension=".wav",
+            initialfile=Path(self.voice_output_var.get()).name or "voice.wav",
+            filetypes=[("WAV audio", "*.wav"), ("All files", "*.*")],
+        )
+        if path:
+            self.voice_output_var.set(path)
 
     def pick_folder(self) -> None:
         path = filedialog.askdirectory()
@@ -261,6 +340,13 @@ class CapCutVideoApp(tk.Tk):
         self.config_data["pexels_api_key"] = self.pexels_api_key_var.get().strip()
         self.config_data["pexels_query"] = self.pexels_query_var.get().strip()
         self.config_data["pexels_threads"] = self.pexels_threads_var.get().strip()
+        self.config_data["voicevox_speaker"] = self.voice_speaker_var.get().strip()
+        self.config_data["voicevox_pause_ms"] = self.voice_pause_var.get().strip()
+        self.config_data["voicevox_speed"] = self.voice_speed_var.get().strip()
+        self.config_data["voicevox_pitch"] = self.voice_pitch_var.get().strip()
+        self.config_data["voicevox_volume"] = self.voice_volume_var.get().strip()
+        self.config_data["voicevox_intonation"] = self.voice_intonation_var.get().strip()
+        self.config_data["voicevox_output"] = self.voice_output_var.get().strip()
         save_app_config(self.config_data)
 
     def start(self) -> None:
@@ -329,7 +415,8 @@ class CapCutVideoApp(tk.Tk):
             require_binary("ffmpeg")
             require_binary("ffprobe")
 
-            srt = Path(self.srt_var.get()).resolve()
+            srt = Path(self.srt_var.get()).resolve() if self.srt_var.get().strip() else Path()
+            voice_audio: Path | None = None
             video_folder = Path(self.folder_var.get()).resolve()
             output = Path(self.output_var.get()).resolve()
             clip_length = float(self.clip_length_var.get())
@@ -340,6 +427,45 @@ class CapCutVideoApp(tk.Tk):
 
             if seed_text:
                 random.seed(int(seed_text))
+            if self.use_voicevox_var.get():
+                voice_audio = Path(self.voice_output_var.get()).resolve()
+                if voice_audio.suffix.lower() != ".wav":
+                    voice_audio = voice_audio.with_suffix(".wav")
+                    self.voice_output_var.set(str(voice_audio))
+                srt = voice_audio.with_suffix(".srt")
+                text_path = voice_audio.with_suffix(".txt")
+                voice_text = self.voice_text.get("1.0", "end").strip()
+                if voice_text:
+                    voice_audio.parent.mkdir(parents=True, exist_ok=True)
+                    old_text = text_path.read_text(encoding="utf-8-sig", errors="replace") if text_path.is_file() else ""
+                    if old_text != voice_text:
+                        text_path.write_text(voice_text, encoding="utf-8")
+                elif not text_path.is_file():
+                    selected_text_path = Path(self.text_var.get()).resolve()
+                    if not selected_text_path.is_file():
+                        raise ValueError(f"Chưa nhập nội dung đọc hoặc chọn file text: {selected_text_path}")
+                    text_path = selected_text_path
+                settings = VoicevoxSettings(
+                    speaker=int(self.voice_speaker_var.get()),
+                    pause_ms=int(self.voice_pause_var.get()),
+                    speed=float(self.voice_speed_var.get()),
+                    pitch=float(self.voice_pitch_var.get()),
+                    volume=float(self.voice_volume_var.get()),
+                    intonation=float(self.voice_intonation_var.get()),
+                )
+                self.ui(self.set_status, "Đang tạo voice VOICEVOX và SRT...")
+                self.ui(self.write_log, f"VOICEVOX speaker={settings.speaker}, speed={settings.speed}, pitch={settings.pitch}, volume={settings.volume}, intonation={settings.intonation}, pause={settings.pause_ms}ms")
+                synthesize_text_file(
+                    text_path,
+                    voice_audio,
+                    srt,
+                    settings,
+                    progress=lambda text: (self.ui(self.set_status, text), self.ui(self.write_log, text)),
+                )
+                self.srt_var.set(str(srt))
+                self.save_pexels_config()
+                self.ui(self.write_log, f"Đã sẵn sàng audio: {voice_audio}")
+                self.ui(self.write_log, f"Đã sẵn sàng SRT: {srt}")
             if not srt.is_file():
                 raise ValueError(f"Không tìm thấy file SRT: {srt}")
             use_pexels = bool(self.use_pexels_var.get())
@@ -482,16 +608,24 @@ class CapCutVideoApp(tk.Tk):
 
                 if self.burn_subtitles_var.get():
                     raw_output = temp_path / "joined_without_subtitles.mp4"
+                    subtitle_output = temp_path / "joined_with_subtitles.mp4" if voice_audio else output
                     self.ui(self.set_status, "Đang ghép video...")
                     concat_clips(clips, raw_output, duration)
                     self.ui(self.write_log, "Đang gắn phụ đề...")
                     self.ui(self.set_status, "Đang gắn phụ đề vào video...")
-                    burn_subtitles(raw_output, srt, output, width, height, encoder)
+                    burn_subtitles(raw_output, srt, subtitle_output, width, height, encoder)
+                    if voice_audio:
+                        self.ui(self.write_log, "Đang ghép voice vào video...")
+                        mux_audio(subtitle_output, voice_audio, output, duration)
                     output_created = True
                 elif not self.create_capcut_project_var.get():
                     self.ui(self.write_log, "Đang ghép video...")
                     self.ui(self.set_status, "Đang ghép video...")
-                    concat_clips(clips, output, duration)
+                    joined_output = temp_path / "joined_without_audio.mp4" if voice_audio else output
+                    concat_clips(clips, joined_output, duration)
+                    if voice_audio:
+                        self.ui(self.write_log, "Đang ghép voice vào video...")
+                        mux_audio(joined_output, voice_audio, output, duration)
                     output_created = True
                 else:
                     self.ui(self.write_log, "Bỏ qua ghép output.mp4 vì đang tạo project CapCut có clip riêng lẻ.")
@@ -507,6 +641,7 @@ class CapCutVideoApp(tk.Tk):
                     fallback_clip_duration=clip_length,
                     clip_durations=clip_durations,
                     srt_path=srt if self.import_srt_var.get() else None,
+                    audio_path=voice_audio,
                     project_folder=project_folder,
                     clips_are_internal=project_folder is not None,
                     backup_project=False,
