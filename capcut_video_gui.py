@@ -875,12 +875,31 @@ class CapCutVideoApp(tk.Tk):
             raise ValueError(f"Chưa nhập nội dung đọc hoặc chọn file text: {selected_text_path}")
         return selected_text_path
 
+    @staticmethod
+    def fish_outputs_are_current(text_path: Path, wav_path: Path, srt_path: Path) -> bool:
+        if not text_path.is_file() or not wav_path.is_file() or not srt_path.is_file():
+            return False
+        if wav_path.stat().st_size <= 0 or srt_path.stat().st_size <= 0:
+            return False
+        text_mtime = text_path.stat().st_mtime
+        return min(wav_path.stat().st_mtime, srt_path.stat().st_mtime) >= text_mtime
+
     def synthesize_fish_mexico(self) -> tuple[Path, Path]:
         load_dotenv(APP_DIR / ".env", override=True)
         if not os.getenv("FISH_API_KEY"):
             raise RuntimeError("Chưa có FISH_API_KEY trong file .env")
 
         text_path = self.fish_mexico_text_path()
+        final_wav = Path(self.fish_output_var.get().strip() or (FISH_MEXICO_OUTPUT / "voice.wav")).resolve()
+        if final_wav.suffix.lower() != ".wav":
+            final_wav = final_wav.with_suffix(".wav")
+            self.fish_output_var.set(str(final_wav))
+        final_wav.parent.mkdir(parents=True, exist_ok=True)
+        final_srt = final_wav.with_suffix(".srt")
+        if self.fish_outputs_are_current(text_path, final_wav, final_srt):
+            self.ui(self.write_fish_log, f"Fish Mexico bỏ qua, đã có sẵn: {final_wav.name}, {final_srt.name}")
+            return final_wav, final_srt
+
         text = text_path.read_text(encoding="utf-8-sig", errors="replace").strip()
         if not text:
             raise ValueError("Nội dung đọc Mexico đang trống.")
@@ -900,13 +919,6 @@ class CapCutVideoApp(tk.Tk):
             raise ValueError("Setting Mexico phải là số hợp lệ.") from exc
         if speed <= 0 or max_chars <= 0 or retry_count < 0:
             raise ValueError("Tốc độ, ký tự/câu hoặc số lần thử lại Mexico không hợp lệ.")
-
-        final_wav = Path(self.fish_output_var.get().strip() or (FISH_MEXICO_OUTPUT / "voice.wav")).resolve()
-        if final_wav.suffix.lower() != ".wav":
-            final_wav = final_wav.with_suffix(".wav")
-            self.fish_output_var.set(str(final_wav))
-        final_wav.parent.mkdir(parents=True, exist_ok=True)
-        final_srt = final_wav.with_suffix(".srt")
         cleaned_text, ellipsis_report = sanitize_problem_ellipsis(text, pause_values["ellipsis_ms"])
         units = build_pause_units(
             cleaned_text,
