@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import socket
 import time
 import urllib.error
 import urllib.parse
@@ -13,6 +14,7 @@ from typing import Callable, Any
 
 
 PEXELS_API_BASE = "https://api.pexels.com/v1/videos"
+NETWORK_RETRIES = 3
 FALLBACK_QUERIES = [
     "nature",
     "landscape",
@@ -50,6 +52,14 @@ def _path_name_is_16x9(path: Path) -> bool:
     return is_landscape_16x9(int(match.group(1)), int(match.group(2)))
 
 
+def _is_transient_network_error(exc: BaseException) -> bool:
+    if isinstance(exc, (TimeoutError, socket.timeout)):
+        return True
+    if isinstance(exc, urllib.error.URLError):
+        return True
+    return "timed out" in str(exc).lower()
+
+
 def _request_json(url: str, api_key: str) -> tuple[dict[str, Any], dict[str, str]]:
     request = urllib.request.Request(url, headers={"Authorization": api_key, "User-Agent": "srt-capcut-tool/1.0"})
     try:
@@ -64,6 +74,29 @@ def _request_json(url: str, api_key: str) -> tuple[dict[str, Any], dict[str, str
             raise RuntimeError("Pexels API bi gioi han request. Hay doi mot luc roi thu lai.") from exc
         raise RuntimeError(f"Pexels API loi HTTP {exc.code}: {detail[:300]}") from exc
     return json.loads(body), headers
+
+
+def _request_json_with_retry(
+    url: str,
+    api_key: str,
+    *,
+    progress: Callable[[str], None] | None = None,
+    label: str = "Pexels API",
+) -> tuple[dict[str, Any], dict[str, str]]:
+    last_error: BaseException | None = None
+    for attempt in range(1, NETWORK_RETRIES + 1):
+        try:
+            return _request_json(url, api_key)
+        except RuntimeError:
+            raise
+        except Exception as exc:
+            last_error = exc
+            if not _is_transient_network_error(exc) or attempt >= NETWORK_RETRIES:
+                break
+            if progress:
+                progress(f"{label} bi timeout, thu lai {attempt + 1}/{NETWORK_RETRIES}...")
+            time.sleep(1.5 * attempt)
+    raise RuntimeError(f"{label} bi loi mang/timeout: {last_error}") from last_error
 
 
 def _download_file(url: str, target: Path, progress: Callable[[int, int | None], None] | None = None) -> None:
@@ -82,6 +115,28 @@ def _download_file(url: str, target: Path, progress: Callable[[int, int | None],
             if progress:
                 progress(done, total)
     temp.replace(target)
+
+
+def _download_file_with_retry(
+    url: str,
+    target: Path,
+    progress: Callable[[int, int | None], None] | None = None,
+    log: Callable[[str], None] | None = None,
+) -> None:
+    last_error: BaseException | None = None
+    for attempt in range(1, NETWORK_RETRIES + 1):
+        try:
+            _download_file(url, target, progress)
+            return
+        except Exception as exc:
+            last_error = exc
+            target.with_suffix(target.suffix + ".download").unlink(missing_ok=True)
+            if not _is_transient_network_error(exc) or attempt >= NETWORK_RETRIES:
+                break
+            if log:
+                log(f"{target.name} bi timeout, tai lai {attempt + 1}/{NETWORK_RETRIES}...")
+            time.sleep(2.0 * attempt)
+    raise RuntimeError(f"Khong tai duoc {target.name}: {last_error}") from last_error
 
 
 def _best_video_file(video: dict[str, Any], *, only_16x9: bool, target_width: int, target_height: int) -> dict[str, Any] | None:
@@ -204,7 +259,14 @@ def download_pexels_videos(
             if progress:
                 label = search_query or "popular"
                 progress(f'Dang goi Pexels API "{label}" trang {page}...')
-            data, headers = _request_json(url, api_key)
+            try:
+                data, headers = _request_json_with_retry(url, api_key, progress=progress, label=f'Pexels API "{label}" trang {page}')
+            except RuntimeError as exc:
+                if "mang/timeout" not in str(exc) and "timed out" not in str(exc).lower():
+                    raise
+                if progress:
+                    progress(f'Bo qua "{label}" trang {page} vi loi: {exc}')
+                break
             remaining = headers.get("X-Ratelimit-Remaining")
             if remaining and progress:
                 progress(f"Pexels API con lai: {remaining} request")
@@ -261,7 +323,7 @@ def download_pexels_videos(
             else:
                 progress(f"Dang tai {target.name}: {round(done / 1024 / 1024, 1)} MB")
 
-        _download_file(str(chosen["link"]), target, file_progress)
+        _download_file_with_retry(str(chosen["link"]), target, file_progress, progress)
         item = {
             "file": target.name,
             "pexels_url": video.get("url"),
@@ -284,7 +346,12 @@ def download_pexels_videos(
                 for index, (target, chosen, video) in enumerate(candidates, start=1)
             ]
             for future in as_completed(futures):
-                target, item = future.result()
+                try:
+                    target, item = future.result()
+                except Exception as exc:
+                    if progress:
+                        progress(f"Bo qua 1 video Pexels loi: {exc}")
+                    continue
                 result_paths.append(target)
                 attribution.append(item)
                 completed += 1
