@@ -115,4 +115,22 @@ if (-not (Has-Command "ffmpeg") -or -not (Has-Command "ffprobe")) {
     Install-FFmpegPortable
 }
 
+if (Has-Command "python") {
+    $PythonCmd = "python"
+} elseif (Has-Command "py") {
+    $PythonCmd = "py"
+} else {
+    throw "Khong tim thay Python de cai thu vien."
+}
+
+Write-Host "Dang cai/cap nhat thu vien Python..."
+if ($PythonCmd -eq "py") {
+    & py -3 -m pip install --upgrade fish-audio-sdk python-dotenv httpx tkinterdnd2 python-docx requests
+} else {
+    & python -m pip install --upgrade fish-audio-sdk python-dotenv httpx tkinterdnd2 python-docx requests
+}
+if ($LASTEXITCODE -ne 0) {
+    throw "Cai thu vien Python khong thanh cong."
+}
+
 Write-Host "Kiem tra dependency xong."

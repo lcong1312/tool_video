@@ -14,6 +14,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -35,9 +36,35 @@ from capcut_draft import (
 )
 from pexels_downloader import download_pexels_videos
 from voicevox_tts import VoicevoxSettings, synthesize_text_file
+from dotenv import load_dotenv
+from fishaudio import FishAudio
+from fishaudio.utils import save
+from fish_mexico_gui import (
+    build_pause_units,
+    build_s2_requests,
+    merge_wavs_with_pauses,
+    sanitize_problem_ellipsis,
+    wav_duration_seconds,
+    write_srt_with_pauses,
+)
 
 
-APP_CONFIG = Path(__file__).with_name("config.json")
+APP_DIR = Path(__file__).resolve().parent
+APP_CONFIG = APP_DIR / "config.json"
+FISH_MEXICO_DIR = APP_DIR
+FISH_MEXICO_GUI = APP_DIR / "fish_mexico_gui.py"
+FISH_MEXICO_RUN = APP_DIR / "run_setting_fish.bat"
+FISH_MEXICO_OUTPUT = APP_DIR / "02.OUTPUT"
+FISH_MEXICO_SETTINGS = APP_DIR / "fish_story_v53_settings.json"
+FISH_MEXICO_LANGUAGE = "Tiếng Tây Ban Nha Mexico"
+FISH_MEXICO_LANGUAGE_CODE = "es-MX"
+FISH_MEXICO_DEFAULT_VOICE = "3868fec905344d058c8d48b673277386"
+FISH_LANGUAGE_NAMES = {
+    "ja": "Tiếng Nhật",
+    "zh-TW": "Tiếng Trung Đài Loan",
+    "es-MX": "Tiếng Tây Ban Nha Mexico",
+}
+FISH_LANGUAGE_CODES = {value: key for key, value in FISH_LANGUAGE_NAMES.items()}
 COMMON_CAPCUT_PATHS = [
     Path(os.environ.get("LOCALAPPDATA", "")) / "CapCut" / "Apps" / "CapCut.exe",
     Path(os.environ.get("LOCALAPPDATA", "")) / "CapCut" / "CapCut.exe",
@@ -83,12 +110,43 @@ class CapCutVideoApp(tk.Tk):
             value=str(self.config_data.get("voicevox_output") or Path.cwd() / "voicevox_output" / "voice.wav")
         )
         self.use_voicevox_var = tk.BooleanVar(value=False)
+        self.voice_engine_var = tk.StringVar(value=str(self.config_data.get("voice_engine") or "japan"))
         self.voice_speaker_var = tk.StringVar(value=str(self.config_data.get("voicevox_speaker") or "1"))
         self.voice_pause_var = tk.StringVar(value=str(self.config_data.get("voicevox_pause_ms") or "300"))
         self.voice_speed_var = tk.StringVar(value=str(self.config_data.get("voicevox_speed") or "1.0"))
         self.voice_pitch_var = tk.StringVar(value=str(self.config_data.get("voicevox_pitch") or "0.0"))
         self.voice_volume_var = tk.StringVar(value=str(self.config_data.get("voicevox_volume") or "1.0"))
         self.voice_intonation_var = tk.StringVar(value=str(self.config_data.get("voicevox_intonation") or "1.0"))
+        saved_fish_language = str(self.config_data.get("fish_language") or FISH_MEXICO_LANGUAGE)
+        if saved_fish_language not in FISH_LANGUAGE_CODES:
+            saved_fish_language = FISH_MEXICO_LANGUAGE
+        self.fish_language_var = tk.StringVar(value=saved_fish_language)
+        self.fish_voice_display_var = tk.StringVar()
+        self.fish_voice_lookup: dict[str, str] = {}
+        self.fish_voice_id_var = tk.StringVar(
+            value=str(self.config_data.get("fish_mexico_voice_id") or os.environ.get("REFERENCE_ID", "") or FISH_MEXICO_DEFAULT_VOICE)
+        )
+        saved_fish_output = str(self.config_data.get("fish_mexico_output") or "")
+        if saved_fish_output and Path(saved_fish_output).suffix:
+            fish_output_value = saved_fish_output
+        else:
+            fish_output_dir = Path(saved_fish_output) if saved_fish_output else FISH_MEXICO_OUTPUT
+            fish_output_value = str(fish_output_dir / "voice.wav")
+        self.fish_output_var = tk.StringVar(value=fish_output_value)
+        self.fish_model_var = tk.StringVar(value=str(self.config_data.get("fish_mexico_model") or "s2.1-pro-free"))
+        self.fish_speed_var = tk.StringVar(value=str(self.config_data.get("fish_mexico_speed") or "0.93"))
+        self.fish_max_chars_var = tk.StringVar(value=str(self.config_data.get("fish_mexico_max_chars") or "100"))
+        self.fish_retry_var = tk.StringVar(value=str(self.config_data.get("fish_mexico_retry") or "3"))
+        self.fish_latency_var = tk.StringVar(value=str(self.config_data.get("fish_mexico_latency") or "normal"))
+        self.fish_auto_s2_var = tk.BooleanVar(value=bool(self.config_data.get("fish_mexico_auto_s2", True)))
+        self.fish_s2_mode_var = tk.StringVar(value=str(self.config_data.get("fish_mexico_s2_mode") or "natural"))
+        self.fish_exact_pause_var = tk.BooleanVar(value=bool(self.config_data.get("fish_mexico_exact_pause", True)))
+        self.fish_strict_commas_var = tk.BooleanVar(value=bool(self.config_data.get("fish_mexico_strict_commas", False)))
+        self.fish_pause_comma_var = tk.StringVar(value=str(self.config_data.get("fish_mexico_pause_comma") or "100"))
+        self.fish_pause_sentence_var = tk.StringVar(value=str(self.config_data.get("fish_mexico_pause_sentence") or "400"))
+        self.fish_pause_question_var = tk.StringVar(value=str(self.config_data.get("fish_mexico_pause_question") or "500"))
+        self.fish_pause_ellipsis_var = tk.StringVar(value=str(self.config_data.get("fish_mexico_pause_ellipsis") or "700"))
+        self.fish_pause_paragraph_var = tk.StringVar(value=str(self.config_data.get("fish_mexico_pause_paragraph") or "900"))
         self.folder_var = tk.StringVar()
         self.output_var = tk.StringVar(value=str(Path.cwd() / "output.mp4"))
         self.clip_length_var = tk.StringVar(value="3")
@@ -116,10 +174,33 @@ class CapCutVideoApp(tk.Tk):
 
         self.worker: threading.Thread | None = None
         self._build_ui()
+        self.reload_fish_voice_settings()
 
     def _build_ui(self) -> None:
-        root = ttk.Frame(self, padding=18)
-        root.pack(fill="both", expand=True)
+        scroll_host = ttk.Frame(self)
+        scroll_host.pack(fill="both", expand=True)
+        scroll_host.rowconfigure(0, weight=1)
+        scroll_host.columnconfigure(0, weight=1)
+
+        self.scroll_canvas = tk.Canvas(scroll_host, highlightthickness=0)
+        self.scroll_canvas.grid(row=0, column=0, sticky="nsew")
+        page_scrollbar = ttk.Scrollbar(scroll_host, orient="vertical", command=self.scroll_canvas.yview)
+        page_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.scroll_canvas.configure(yscrollcommand=page_scrollbar.set)
+
+        root = ttk.Frame(self.scroll_canvas, padding=18)
+        self.scroll_window = self.scroll_canvas.create_window((0, 0), window=root, anchor="nw")
+        root.bind(
+            "<Configure>",
+            lambda _event: self.scroll_canvas.configure(scrollregion=self.scroll_canvas.bbox("all")),
+        )
+        self.scroll_canvas.bind(
+            "<Configure>",
+            lambda event: self.scroll_canvas.itemconfigure(self.scroll_window, width=event.width),
+        )
+        self.bind_all("<MouseWheel>", self.on_mousewheel)
+        self.bind_all("<Button-4>", self.on_mousewheel)
+        self.bind_all("<Button-5>", self.on_mousewheel)
         root.columnconfigure(1, weight=1)
 
         voice = ttk.LabelFrame(root, text="VOICEVOX")
@@ -132,18 +213,63 @@ class CapCutVideoApp(tk.Tk):
             variable=self.use_voicevox_var,
             command=self.update_voicevox_ui,
         ).grid(row=0, column=0, columnspan=2, sticky="w", padx=6, pady=5)
-        ttk.Label(voice, text="Giọng").grid(row=0, column=2, sticky="e", padx=(8, 4))
-        ttk.Entry(voice, textvariable=self.voice_speaker_var, width=8).grid(row=0, column=3, sticky="w")
-        ttk.Label(voice, text="Nghỉ ms").grid(row=0, column=4, sticky="e", padx=(8, 4))
-        ttk.Entry(voice, textvariable=self.voice_pause_var, width=8).grid(row=0, column=5, sticky="w")
-        ttk.Label(voice, text="Tốc độ").grid(row=1, column=0, sticky="e", padx=(6, 4), pady=5)
-        ttk.Entry(voice, textvariable=self.voice_speed_var, width=8).grid(row=1, column=1, sticky="w")
-        ttk.Label(voice, text="Độ cao").grid(row=1, column=2, sticky="e", padx=(8, 4))
-        ttk.Entry(voice, textvariable=self.voice_pitch_var, width=8).grid(row=1, column=3, sticky="w")
-        ttk.Label(voice, text="Âm lượng").grid(row=1, column=4, sticky="e", padx=(8, 4))
-        ttk.Entry(voice, textvariable=self.voice_volume_var, width=8).grid(row=1, column=5, sticky="w")
-        ttk.Label(voice, text="Độ nhấn").grid(row=1, column=6, sticky="e", padx=(8, 4))
-        ttk.Entry(voice, textvariable=self.voice_intonation_var, width=8).grid(row=1, column=7, sticky="w")
+        self.voice_engine_frame = ttk.Frame(voice)
+        self.voice_engine_frame.grid(row=0, column=6, columnspan=2, sticky="w", padx=(8, 0), pady=5)
+        ttk.Radiobutton(
+            self.voice_engine_frame,
+            text="Nhật",
+            variable=self.voice_engine_var,
+            value="japan",
+            command=self.update_voicevox_ui,
+        ).pack(side="left", padx=(0, 12))
+        ttk.Radiobutton(
+            self.voice_engine_frame,
+            text="Mexico",
+            variable=self.voice_engine_var,
+            value="mexico",
+            command=self.update_voicevox_ui,
+        ).pack(side="left")
+        self.japan_voice_widgets = []
+        speaker_label = ttk.Label(voice, text="Giọng")
+        speaker_label.grid(row=0, column=2, sticky="e", padx=(8, 4))
+        speaker_entry = ttk.Entry(voice, textvariable=self.voice_speaker_var, width=8)
+        speaker_entry.grid(row=0, column=3, sticky="w")
+        pause_label = ttk.Label(voice, text="Nghỉ ms")
+        pause_label.grid(row=0, column=4, sticky="e", padx=(8, 4))
+        pause_entry = ttk.Entry(voice, textvariable=self.voice_pause_var, width=8)
+        pause_entry.grid(row=0, column=5, sticky="w")
+        speed_label = ttk.Label(voice, text="Tốc độ")
+        speed_label.grid(row=1, column=0, sticky="e", padx=(6, 4), pady=5)
+        speed_entry = ttk.Entry(voice, textvariable=self.voice_speed_var, width=8)
+        speed_entry.grid(row=1, column=1, sticky="w")
+        pitch_label = ttk.Label(voice, text="Độ cao")
+        pitch_label.grid(row=1, column=2, sticky="e", padx=(8, 4))
+        pitch_entry = ttk.Entry(voice, textvariable=self.voice_pitch_var, width=8)
+        pitch_entry.grid(row=1, column=3, sticky="w")
+        volume_label = ttk.Label(voice, text="Âm lượng")
+        volume_label.grid(row=1, column=4, sticky="e", padx=(8, 4))
+        volume_entry = ttk.Entry(voice, textvariable=self.voice_volume_var, width=8)
+        volume_entry.grid(row=1, column=5, sticky="w")
+        intonation_label = ttk.Label(voice, text="Độ nhấn")
+        intonation_label.grid(row=1, column=6, sticky="e", padx=(8, 4))
+        intonation_entry = ttk.Entry(voice, textvariable=self.voice_intonation_var, width=8)
+        intonation_entry.grid(row=1, column=7, sticky="w")
+        self.japan_voice_widgets.extend(
+            [
+                speaker_label,
+                speaker_entry,
+                pause_label,
+                pause_entry,
+                speed_label,
+                speed_entry,
+                pitch_label,
+                pitch_entry,
+                volume_label,
+                volume_entry,
+                intonation_label,
+                intonation_entry,
+            ]
+        )
         self.voice_output_row = ttk.Frame(voice)
         self.voice_output_row.grid(row=2, column=0, columnspan=8, sticky="ew", padx=6, pady=(4, 2))
         self.voice_output_row.columnconfigure(1, weight=1)
@@ -156,7 +282,110 @@ class CapCutVideoApp(tk.Tk):
         ttk.Label(self.voice_text_frame, text="Nội dung đọc").grid(row=0, column=0, sticky="w", pady=(0, 4))
         self.voice_text = tk.Text(self.voice_text_frame, height=5, wrap="word")
         self.voice_text.grid(row=1, column=0, sticky="ew")
+        self.fish_mexico_frame = ttk.Frame(voice)
+        self.fish_mexico_frame.grid(row=4, column=0, columnspan=8, sticky="ew", padx=6, pady=(4, 6))
+        for index in range(8):
+            self.fish_mexico_frame.columnconfigure(index, weight=1)
+        ttk.Label(self.fish_mexico_frame, text="Ngôn ngữ").grid(row=0, column=0, sticky="w")
+        self.fish_language_combo = ttk.Combobox(
+            self.fish_mexico_frame,
+            textvariable=self.fish_language_var,
+            values=list(FISH_LANGUAGE_CODES.keys()),
+            state="readonly",
+        )
+        self.fish_language_combo.grid(row=0, column=1, columnspan=2, sticky="ew", padx=(0, 8), pady=(0, 5))
+        self.fish_language_combo.bind("<<ComboboxSelected>>", self.on_fish_language_selected)
+        ttk.Label(self.fish_mexico_frame, text="Chọn giọng").grid(row=0, column=3, sticky="w")
+        self.fish_voice_combo = ttk.Combobox(
+            self.fish_mexico_frame,
+            textvariable=self.fish_voice_display_var,
+            state="readonly",
+        )
+        self.fish_voice_combo.grid(row=0, column=4, columnspan=2, sticky="ew", padx=(0, 8), pady=(0, 5))
+        self.fish_voice_combo.bind("<<ComboboxSelected>>", self.on_fish_voice_selected)
+        ttk.Button(self.fish_mexico_frame, text="Làm mới", command=self.reload_fish_voice_settings).grid(
+            row=0, column=6, sticky="ew", padx=(0, 8), pady=(0, 5)
+        )
+        ttk.Button(self.fish_mexico_frame, text="Setting giọng", command=self.open_fish_mexico).grid(
+            row=0, column=7, sticky="ew", pady=(0, 5)
+        )
 
+        ttk.Label(self.fish_mexico_frame, text="Voice ID đang dùng").grid(row=1, column=0, sticky="w")
+        ttk.Entry(self.fish_mexico_frame, textvariable=self.fish_voice_id_var, state="readonly").grid(
+            row=1, column=1, columnspan=7, sticky="ew", pady=(0, 5)
+        )
+
+        ttk.Label(self.fish_mexico_frame, text="Lưu voice/SRT").grid(row=2, column=0, sticky="w")
+        ttk.Entry(self.fish_mexico_frame, textvariable=self.fish_output_var).grid(
+            row=2, column=1, columnspan=6, sticky="ew", padx=(0, 8), pady=(0, 5)
+        )
+        ttk.Button(self.fish_mexico_frame, text="Chọn", command=self.pick_fish_output).grid(
+            row=2, column=7, sticky="ew", pady=(0, 5)
+        )
+
+        ttk.Label(self.fish_mexico_frame, text="Model").grid(row=3, column=0, sticky="w")
+        ttk.Combobox(
+            self.fish_mexico_frame,
+            textvariable=self.fish_model_var,
+            values=["s2.1-pro-free", "s2.1-pro", "s2-pro"],
+            state="readonly",
+        ).grid(row=4, column=0, sticky="ew", padx=(0, 8))
+        ttk.Label(self.fish_mexico_frame, text="Tốc độ").grid(row=3, column=1, sticky="w")
+        ttk.Entry(self.fish_mexico_frame, textvariable=self.fish_speed_var, width=8).grid(row=4, column=1, sticky="ew", padx=(0, 8))
+        ttk.Label(self.fish_mexico_frame, text="Ký tự / câu").grid(row=3, column=2, sticky="w")
+        ttk.Entry(self.fish_mexico_frame, textvariable=self.fish_max_chars_var, width=8).grid(row=4, column=2, sticky="ew", padx=(0, 8))
+        ttk.Label(self.fish_mexico_frame, text="Thử lại").grid(row=3, column=3, sticky="w")
+        ttk.Entry(self.fish_mexico_frame, textvariable=self.fish_retry_var, width=8).grid(row=4, column=3, sticky="ew", padx=(0, 8))
+        ttk.Label(self.fish_mexico_frame, text="API").grid(row=3, column=4, sticky="w")
+        ttk.Combobox(
+            self.fish_mexico_frame,
+            textvariable=self.fish_latency_var,
+            values=["normal", "balanced"],
+            state="readonly",
+            width=10,
+        ).grid(row=4, column=4, sticky="ew", padx=(0, 8))
+        ttk.Checkbutton(
+            self.fish_mexico_frame,
+            text="S2 tự động",
+            variable=self.fish_auto_s2_var,
+        ).grid(row=4, column=5, sticky="w")
+        ttk.Label(self.fish_mexico_frame, text="Mức diễn").grid(row=3, column=6, sticky="w")
+        ttk.Combobox(
+            self.fish_mexico_frame,
+            textvariable=self.fish_s2_mode_var,
+            values=["natural", "drama", "strong"],
+            state="readonly",
+        ).grid(row=4, column=6, columnspan=2, sticky="ew")
+
+        ttk.Checkbutton(
+            self.fish_mexico_frame,
+            text="Bật chèn im lặng thật",
+            variable=self.fish_exact_pause_var,
+        ).grid(row=5, column=0, columnspan=2, sticky="w", pady=(7, 0))
+        ttk.Checkbutton(
+            self.fish_mexico_frame,
+            text="Ép dừng cả dấu phẩy",
+            variable=self.fish_strict_commas_var,
+        ).grid(row=5, column=2, columnspan=3, sticky="w", pady=(7, 0))
+
+        pause_fields = [
+            ("Dấu phẩy", self.fish_pause_comma_var),
+            ("Dấu chấm", self.fish_pause_sentence_var),
+            ("? / !", self.fish_pause_question_var),
+            ("Dấu ...", self.fish_pause_ellipsis_var),
+            ("Xuống đoạn", self.fish_pause_paragraph_var),
+        ]
+        for index, (label, variable) in enumerate(pause_fields):
+            ttk.Label(self.fish_mexico_frame, text=label).grid(row=6, column=index, sticky="w", pady=(5, 0))
+            ttk.Entry(self.fish_mexico_frame, textvariable=variable, width=8).grid(
+                row=7, column=index, sticky="ew", padx=(0, 8)
+            )
+        ttk.Button(self.fish_mexico_frame, text="Preset tự nhiên", command=lambda: self.apply_fish_pause_preset("natural")).grid(
+            row=7, column=5, sticky="ew", padx=(0, 8)
+        )
+        ttk.Button(self.fish_mexico_frame, text="Preset drama", command=lambda: self.apply_fish_pause_preset("drama")).grid(
+            row=7, column=6, columnspan=2, sticky="ew"
+        )
         source = ttk.Frame(root)
         source.grid(row=1, column=0, columnspan=3, sticky="w", pady=(0, 8))
         ttk.Label(source, text="Nguồn video").pack(side="left", padx=(0, 12))
@@ -264,15 +493,42 @@ class CapCutVideoApp(tk.Tk):
         ttk.Entry(parent, textvariable=variable).grid(row=row, column=1, sticky="ew", padx=8, pady=5)
         ttk.Button(parent, text="Chọn", command=command).grid(row=row, column=2, sticky="ew", pady=5)
 
+    def on_mousewheel(self, event) -> None:
+        if not hasattr(self, "scroll_canvas"):
+            return
+        if getattr(event, "num", None) == 4:
+            delta = -1
+        elif getattr(event, "num", None) == 5:
+            delta = 1
+        else:
+            delta = -1 * int(event.delta / 120) if event.delta else 0
+        if delta:
+            self.scroll_canvas.yview_scroll(delta, "units")
+
     def update_voicevox_ui(self) -> None:
         if self.use_voicevox_var.get():
             self.srt_row.grid_remove()
-            self.voice_output_row.grid()
-            self.voice_text_frame.grid()
+            self.voice_engine_frame.grid()
+            if self.voice_engine_var.get() == "mexico":
+                for widget in self.japan_voice_widgets:
+                    widget.grid_remove()
+                self.voice_output_row.grid_remove()
+                self.voice_text_frame.grid()
+                self.fish_mexico_frame.grid()
+            else:
+                for widget in self.japan_voice_widgets:
+                    widget.grid()
+                self.voice_output_row.grid()
+                self.voice_text_frame.grid()
+                self.fish_mexico_frame.grid_remove()
         else:
             self.srt_row.grid()
+            self.voice_engine_frame.grid_remove()
+            for widget in self.japan_voice_widgets:
+                widget.grid_remove()
             self.voice_output_row.grid_remove()
             self.voice_text_frame.grid_remove()
+            self.fish_mexico_frame.grid_remove()
 
     def update_source_ui(self) -> None:
         use_pexels = self.source_var.get() == "pexels"
@@ -306,6 +562,36 @@ class CapCutVideoApp(tk.Tk):
         if path:
             self.voice_output_var.set(path)
 
+    def pick_fish_output(self) -> None:
+        current = Path(self.fish_output_var.get().strip() or (FISH_MEXICO_OUTPUT / "voice.wav"))
+        initialdir = current.parent if current.suffix else current
+        initialfile = current.name if current.suffix else "voice.wav"
+        path = filedialog.asksaveasfilename(
+            defaultextension=".wav",
+            initialdir=str(initialdir),
+            initialfile=initialfile,
+            filetypes=[("WAV audio", "*.wav"), ("All files", "*.*")],
+        )
+        if path:
+            self.fish_output_var.set(path)
+
+    def apply_fish_pause_preset(self, preset: str) -> None:
+        if preset == "drama":
+            values = ("150", "480", "620", "900", "1200")
+        else:
+            values = ("100", "400", "500", "700", "900")
+        for variable, value in zip(
+            (
+                self.fish_pause_comma_var,
+                self.fish_pause_sentence_var,
+                self.fish_pause_question_var,
+                self.fish_pause_ellipsis_var,
+                self.fish_pause_paragraph_var,
+            ),
+            values,
+        ):
+            variable.set(value)
+
     def pick_folder(self) -> None:
         path = filedialog.askdirectory()
         if path:
@@ -324,9 +610,54 @@ class CapCutVideoApp(tk.Tk):
         if path:
             self.capcut_var.set(path)
 
+    def open_fish_mexico(self) -> None:
+        if not FISH_MEXICO_RUN.is_file():
+            messagebox.showerror("Fish Mexico", f"Không tìm thấy run_setting_fish.bat:\n{FISH_MEXICO_RUN}")
+            return
+        if FISH_MEXICO_SETTINGS.is_file():
+            try:
+                settings = json.loads(FISH_MEXICO_SETTINGS.read_text(encoding="utf-8-sig"))
+                if isinstance(settings, dict):
+                    settings["last_language"] = self.current_fish_language_code()
+                    FISH_MEXICO_SETTINGS.write_text(
+                        json.dumps(settings, ensure_ascii=False, indent=2),
+                        encoding="utf-8",
+                    )
+            except Exception:
+                pass
+        try:
+            subprocess.Popen(
+                [str(FISH_MEXICO_RUN)],
+                cwd=str(FISH_MEXICO_DIR),
+                creationflags=subprocess.CREATE_NEW_CONSOLE if os.name == "nt" else 0,
+            )
+        except Exception as exc:
+            messagebox.showerror("Fish Mexico", f"Không mở được Fish GUI:\n{exc}")
+            return
+        self.status_var.set("Đã mở setting giọng Fish. Lưu xong quay lại bấm Làm mới.")
+
+    def latest_fish_mexico_outputs(self) -> tuple[Path, Path]:
+        if not FISH_MEXICO_OUTPUT.is_dir():
+            raise ValueError(f"Không tìm thấy thư mục output Fish: {FISH_MEXICO_OUTPUT}")
+        jobs = [path for path in FISH_MEXICO_OUTPUT.iterdir() if path.is_dir()]
+        jobs.sort(key=lambda path: path.stat().st_mtime, reverse=True)
+        for job in jobs:
+            wav = job / "final.wav"
+            srt_files = sorted(
+                list(job.glob("final*.srt")) + list(job.glob("*.srt")),
+                key=lambda path: path.stat().st_mtime,
+                reverse=True,
+            )
+            if wav.is_file() and srt_files:
+                return wav, srt_files[0]
+        raise ValueError("Chưa thấy final.wav và final*.srt trong output Fish Mexico.")
+
     def write_log(self, text: str) -> None:
         self.log.insert("end", text + "\n")
         self.log.see("end")
+
+    def write_fish_log(self, text: str) -> None:
+        self.write_log(text)
 
     def set_progress(self, value: int, maximum: int) -> None:
         self.progress.configure(maximum=maximum, value=value)
@@ -335,6 +666,106 @@ class CapCutVideoApp(tk.Tk):
 
     def set_status(self, text: str) -> None:
         self.status_var.set(text)
+
+    def current_fish_language_code(self) -> str:
+        return FISH_LANGUAGE_CODES.get(self.fish_language_var.get(), FISH_MEXICO_LANGUAGE_CODE)
+
+    @staticmethod
+    def fish_preset_key(language_code: str, voice_id: str) -> str:
+        return f"{language_code}::{voice_id or '__fish_default__'}"
+
+    def load_fish_settings(self) -> dict:
+        if not FISH_MEXICO_SETTINGS.is_file():
+            return {}
+        try:
+            data = json.loads(FISH_MEXICO_SETTINGS.read_text(encoding="utf-8-sig"))
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    def apply_fish_preset(self, preset: dict) -> None:
+        if not isinstance(preset, dict):
+            return
+        mapping = {
+            "model": self.fish_model_var,
+            "speed": self.fish_speed_var,
+            "max_chars": self.fish_max_chars_var,
+            "retry_count": self.fish_retry_var,
+            "latency_mode": self.fish_latency_var,
+            "s2_cue_mode": self.fish_s2_mode_var,
+            "pause_comma": self.fish_pause_comma_var,
+            "pause_sentence": self.fish_pause_sentence_var,
+            "pause_question": self.fish_pause_question_var,
+            "pause_ellipsis": self.fish_pause_ellipsis_var,
+            "pause_paragraph": self.fish_pause_paragraph_var,
+        }
+        for key, variable in mapping.items():
+            if key in preset:
+                variable.set(str(preset[key]))
+        if "auto_s2_cues" in preset:
+            self.fish_auto_s2_var.set(bool(preset["auto_s2_cues"]))
+        if "exact_pause" in preset:
+            self.fish_exact_pause_var.set(bool(preset["exact_pause"]))
+        if "strict_commas" in preset:
+            self.fish_strict_commas_var.set(bool(preset["strict_commas"]))
+
+    def reload_fish_voice_settings(self) -> None:
+        data = self.load_fish_settings()
+        language_code = self.current_fish_language_code()
+        voice_languages = data.get("voice_languages", {}) if isinstance(data.get("voice_languages"), dict) else {}
+        manual_voices = data.get("manual_voices", {}) if isinstance(data.get("manual_voices"), dict) else {}
+        last_by_language = data.get("last_voice_by_language", {}) if isinstance(data.get("last_voice_by_language"), dict) else {}
+
+        lookup: dict[str, str] = {}
+        for voice_id, assigned_language in voice_languages.items():
+            if assigned_language != language_code:
+                continue
+            title = manual_voices.get(voice_id, {}).get("title") if isinstance(manual_voices.get(voice_id), dict) else ""
+            label = title or ("Mexico Story Voice" if voice_id == FISH_MEXICO_DEFAULT_VOICE else "Fish Voice")
+            display = f"{label}  —  {voice_id[:10]}..."
+            lookup[display] = voice_id
+        for voice_id, info in manual_voices.items():
+            if voice_id in lookup.values():
+                continue
+            if info.get("language_code") != language_code and voice_languages.get(voice_id) != language_code:
+                continue
+            title = info.get("title") or "Thủ công"
+            lookup[f"{title}  —  {voice_id[:10]}..."] = voice_id
+
+        default_voice = last_by_language.get(language_code) or (FISH_MEXICO_DEFAULT_VOICE if language_code == FISH_MEXICO_LANGUAGE_CODE else "")
+        if default_voice and default_voice not in lookup.values():
+            lookup[f"[Đã lưu] {default_voice[:10]}..."] = default_voice
+
+        self.fish_voice_lookup = lookup
+        displays = list(lookup.keys())
+        if hasattr(self, "fish_voice_combo"):
+            self.fish_voice_combo.configure(values=displays)
+        selected = next((display for display, voice_id in lookup.items() if voice_id == self.fish_voice_id_var.get().strip()), "")
+        if not selected and default_voice:
+            selected = next((display for display, voice_id in lookup.items() if voice_id == default_voice), "")
+            self.fish_voice_id_var.set(default_voice)
+        if not selected and displays:
+            selected = displays[0]
+            self.fish_voice_id_var.set(lookup[selected])
+        self.fish_voice_display_var.set(selected)
+
+        presets = data.get("voice_presets", {}) if isinstance(data.get("voice_presets"), dict) else {}
+        preset = presets.get(self.fish_preset_key(language_code, self.fish_voice_id_var.get().strip()))
+        if not preset:
+            preset = presets.get(self.fish_preset_key(language_code, "__fish_default__"))
+        self.apply_fish_preset(preset or {})
+
+    def on_fish_language_selected(self, _event=None) -> None:
+        language_code = self.current_fish_language_code()
+        data = self.load_fish_settings()
+        last_by_language = data.get("last_voice_by_language", {}) if isinstance(data.get("last_voice_by_language"), dict) else {}
+        self.fish_voice_id_var.set(last_by_language.get(language_code, ""))
+        self.reload_fish_voice_settings()
+
+    def on_fish_voice_selected(self, _event=None) -> None:
+        voice_id = self.fish_voice_lookup.get(self.fish_voice_display_var.get(), "")
+        self.fish_voice_id_var.set(voice_id)
+        self.reload_fish_voice_settings()
 
     def save_pexels_config(self) -> None:
         self.config_data["pexels_api_key"] = self.pexels_api_key_var.get().strip()
@@ -347,6 +778,24 @@ class CapCutVideoApp(tk.Tk):
         self.config_data["voicevox_volume"] = self.voice_volume_var.get().strip()
         self.config_data["voicevox_intonation"] = self.voice_intonation_var.get().strip()
         self.config_data["voicevox_output"] = self.voice_output_var.get().strip()
+        self.config_data["voice_engine"] = self.voice_engine_var.get().strip()
+        self.config_data["fish_language"] = self.fish_language_var.get().strip()
+        self.config_data["fish_mexico_voice_id"] = self.fish_voice_id_var.get().strip()
+        self.config_data["fish_mexico_output"] = self.fish_output_var.get().strip()
+        self.config_data["fish_mexico_model"] = self.fish_model_var.get().strip()
+        self.config_data["fish_mexico_speed"] = self.fish_speed_var.get().strip()
+        self.config_data["fish_mexico_max_chars"] = self.fish_max_chars_var.get().strip()
+        self.config_data["fish_mexico_retry"] = self.fish_retry_var.get().strip()
+        self.config_data["fish_mexico_latency"] = self.fish_latency_var.get().strip()
+        self.config_data["fish_mexico_auto_s2"] = bool(self.fish_auto_s2_var.get())
+        self.config_data["fish_mexico_s2_mode"] = self.fish_s2_mode_var.get().strip()
+        self.config_data["fish_mexico_exact_pause"] = bool(self.fish_exact_pause_var.get())
+        self.config_data["fish_mexico_strict_commas"] = bool(self.fish_strict_commas_var.get())
+        self.config_data["fish_mexico_pause_comma"] = self.fish_pause_comma_var.get().strip()
+        self.config_data["fish_mexico_pause_sentence"] = self.fish_pause_sentence_var.get().strip()
+        self.config_data["fish_mexico_pause_question"] = self.fish_pause_question_var.get().strip()
+        self.config_data["fish_mexico_pause_ellipsis"] = self.fish_pause_ellipsis_var.get().strip()
+        self.config_data["fish_mexico_pause_paragraph"] = self.fish_pause_paragraph_var.get().strip()
         save_app_config(self.config_data)
 
     def start(self) -> None:
@@ -410,6 +859,148 @@ class CapCutVideoApp(tk.Tk):
                 self.ui(self.write_log, f"Bỏ qua clip lỗi từ {source.name}: {exc}")
         raise RuntimeError(f"Không tạo được clip hợp lệ sau 10 lần thử: {last_error}")
 
+    def fish_mexico_text_path(self) -> Path:
+        output_audio = Path(self.fish_output_var.get().strip() or (FISH_MEXICO_OUTPUT / "voice.wav")).resolve()
+        if output_audio.suffix.lower() != ".wav":
+            output_audio = output_audio.with_suffix(".wav")
+            self.fish_output_var.set(str(output_audio))
+        text_path = output_audio.with_suffix(".txt")
+        voice_text = self.voice_text.get("1.0", "end").strip()
+        if voice_text:
+            output_audio.parent.mkdir(parents=True, exist_ok=True)
+            text_path.write_text(voice_text, encoding="utf-8")
+            return text_path
+        selected_text_path = Path(self.text_var.get()).resolve()
+        if not selected_text_path.is_file():
+            raise ValueError(f"Chưa nhập nội dung đọc hoặc chọn file text: {selected_text_path}")
+        return selected_text_path
+
+    def synthesize_fish_mexico(self) -> tuple[Path, Path]:
+        load_dotenv(APP_DIR / ".env", override=True)
+        if not os.getenv("FISH_API_KEY"):
+            raise RuntimeError("Chưa có FISH_API_KEY trong file .env")
+
+        text_path = self.fish_mexico_text_path()
+        text = text_path.read_text(encoding="utf-8-sig", errors="replace").strip()
+        if not text:
+            raise ValueError("Nội dung đọc Mexico đang trống.")
+
+        try:
+            speed = float(self.fish_speed_var.get().strip())
+            max_chars = int(self.fish_max_chars_var.get().strip())
+            retry_count = int(self.fish_retry_var.get().strip())
+            pause_values = {
+                "comma_ms": int(self.fish_pause_comma_var.get().strip()),
+                "sentence_ms": int(self.fish_pause_sentence_var.get().strip()),
+                "question_ms": int(self.fish_pause_question_var.get().strip()),
+                "ellipsis_ms": int(self.fish_pause_ellipsis_var.get().strip()),
+                "paragraph_ms": int(self.fish_pause_paragraph_var.get().strip()),
+            }
+        except ValueError as exc:
+            raise ValueError("Setting Mexico phải là số hợp lệ.") from exc
+        if speed <= 0 or max_chars <= 0 or retry_count < 0:
+            raise ValueError("Tốc độ, ký tự/câu hoặc số lần thử lại Mexico không hợp lệ.")
+
+        final_wav = Path(self.fish_output_var.get().strip() or (FISH_MEXICO_OUTPUT / "voice.wav")).resolve()
+        if final_wav.suffix.lower() != ".wav":
+            final_wav = final_wav.with_suffix(".wav")
+            self.fish_output_var.set(str(final_wav))
+        final_wav.parent.mkdir(parents=True, exist_ok=True)
+        final_srt = final_wav.with_suffix(".srt")
+        cleaned_text, ellipsis_report = sanitize_problem_ellipsis(text, pause_values["ellipsis_ms"])
+        units = build_pause_units(
+            cleaned_text,
+            max_chars,
+            pause_values["comma_ms"],
+            pause_values["sentence_ms"],
+            pause_values["question_ms"],
+            pause_values["ellipsis_ms"],
+            pause_values["paragraph_ms"],
+            bool(self.fish_strict_commas_var.get()),
+        )
+        if not units:
+            raise RuntimeError("Không tách được nội dung Mexico thành câu đọc.")
+        if not self.fish_exact_pause_var.get():
+            for unit in units:
+                unit["pause_ms"] = 0
+
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        job_dir = final_wav.parent / ".fish_mexico_jobs" / f"{final_wav.stem}_{timestamp}"
+        chunks_dir = job_dir / "chunks"
+        chunks_dir.mkdir(parents=True, exist_ok=True)
+        (job_dir / "script_used.txt").write_text(text, encoding="utf-8")
+        (job_dir / "script_tts_cleaned.txt").write_text(cleaned_text, encoding="utf-8")
+        (job_dir / "ellipsis_cleanup_report.txt").write_text(
+            "\n".join(ellipsis_report) if ellipsis_report else "Không có dòng dấu ba chấm cần xử lý.\n",
+            encoding="utf-8",
+        )
+
+        reference_id = self.fish_voice_id_var.get().strip()
+        client = FishAudio()
+        language_code = self.current_fish_language_code()
+        s2_requests = (
+            build_s2_requests(units, self.fish_s2_mode_var.get().strip() or "natural", language_code)
+            if self.fish_auto_s2_var.get()
+            else [unit["text"] for unit in units]
+        )
+        wav_paths = []
+        durations = []
+        pauses_ms = []
+        pause_plan_lines = []
+        s2_plan_lines = []
+        tagged_blocks = []
+        self.ui(self.write_fish_log, f"Fish Mexico: chia thành {len(units)} câu đọc.")
+        self.ui(self.write_fish_log, f"Fish Mexico voice_id={reference_id or 'default'}, speed={speed}, max_chars={max_chars}")
+
+        for index, unit in enumerate(units, start=1):
+            request_text = s2_requests[index - 1]
+            tagged_blocks.append(request_text)
+            output_path = chunks_dir / f"chunk_{index:04d}.wav"
+            last_error = None
+            self.ui(self.set_status, f"Fish Mexico đang tạo câu {index}/{len(units)}")
+            self.ui(self.set_progress, index - 1, len(units))
+            for attempt in range(1, retry_count + 2):
+                try:
+                    request_args = {
+                        "text": request_text,
+                        "model": self.fish_model_var.get().strip() or "s2.1-pro-free",
+                        "format": "wav",
+                        "speed": speed,
+                        "latency": self.fish_latency_var.get().strip() or "normal",
+                    }
+                    if reference_id:
+                        request_args["reference_id"] = reference_id
+                    audio = client.tts.convert(**request_args)
+                    save(audio, str(output_path))
+                    duration = wav_duration_seconds(output_path)
+                    wav_paths.append(output_path)
+                    durations.append(duration)
+                    pauses_ms.append(int(unit["pause_ms"]))
+                    pause_plan_lines.append(
+                        f"{index:04d} | speech={duration:.3f}s | pause={unit['pause_ms']}ms | {unit['text']}"
+                    )
+                    s2_plan_lines.append(
+                        f"{index:04d}\nORIGINAL: {unit['text']}\nSENT TO FISH: {request_text}\n"
+                    )
+                    self.ui(self.write_fish_log, f"Fish Mexico OK {index}/{len(units)}: {duration:.2f}s")
+                    break
+                except Exception as exc:
+                    last_error = exc
+                    self.ui(self.write_fish_log, f"Fish Mexico lỗi câu {index}, lần {attempt}: {exc}")
+                    time.sleep(1)
+            else:
+                raise RuntimeError(f"Không tạo được câu Mexico {index}. Lỗi cuối: {last_error}")
+
+        merge_wavs_with_pauses(wav_paths, pauses_ms, final_wav)
+        write_srt_with_pauses(units, durations, final_srt)
+        (job_dir / "pause_plan.txt").write_text("\n".join(pause_plan_lines), encoding="utf-8")
+        (job_dir / "script_s2_tagged.txt").write_text("\n\n".join(tagged_blocks), encoding="utf-8")
+        (job_dir / "s2_tag_plan.txt").write_text("\n".join(s2_plan_lines), encoding="utf-8")
+        self.ui(self.set_progress, len(units), len(units))
+        self.ui(self.write_fish_log, f"Fish Mexico audio: {final_wav}")
+        self.ui(self.write_fish_log, f"Fish Mexico SRT: {final_srt}")
+        return final_wav, final_srt
+
     def create_video(self) -> None:
         try:
             require_binary("ffmpeg")
@@ -427,7 +1018,12 @@ class CapCutVideoApp(tk.Tk):
 
             if seed_text:
                 random.seed(int(seed_text))
-            if self.use_voicevox_var.get():
+            if self.use_voicevox_var.get() and self.voice_engine_var.get() == "mexico":
+                self.ui(self.set_status, "Đang tạo voice Fish Mexico và SRT...")
+                voice_audio, srt = self.synthesize_fish_mexico()
+                self.srt_var.set(str(srt))
+                self.save_pexels_config()
+            elif self.use_voicevox_var.get():
                 voice_audio = Path(self.voice_output_var.get()).resolve()
                 if voice_audio.suffix.lower() != ".wav":
                     voice_audio = voice_audio.with_suffix(".wav")
@@ -513,6 +1109,10 @@ class CapCutVideoApp(tk.Tk):
             output.parent.mkdir(parents=True, exist_ok=True)
 
             self.ui(self.write_log, f"Encoder: {encoder}")
+            if self.use_gpu_var.get() and encoder != "libx264":
+                self.ui(self.write_fish_log if self.voice_engine_var.get() == "mexico" else self.write_log, f"GPU đang bật cho bước dựng video: {encoder}")
+            elif self.use_gpu_var.get():
+                self.ui(self.write_fish_log if self.voice_engine_var.get() == "mexico" else self.write_log, "GPU không khả dụng, dựng video bằng CPU libx264.")
             self.ui(self.write_log, f"Thoi luong theo SRT: {duration:.2f}s")
             self.ui(self.write_log, f"So clip can tao: {clip_count}")
             self.ui(self.set_progress, 0, clip_count + 1)

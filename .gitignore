@@ -6,7 +6,7 @@ __pycache__/
 .venv/
 venv/
 env/
-
+.env
 # Tool outputs
 output.mp4
 *.tmp.mp4
