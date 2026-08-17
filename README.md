@@ -191,7 +191,7 @@ python .\make_capcut_video.py .\subtitle.srt .\videos -o .\output.mp4 --seed 123
 - Nếu project cũ tạo lỗi, hãy xóa project đó trong CapCut rồi tạo lại bằng bản tool mới.
 - Không nên đổi tên hoặc di chuyển folder project trong `com.lveditor.draft` bằng tay.
 - Nếu copy tool sang máy khác, hãy copy cả thư mục `bin` để FFmpeg đi kèm và thư mục `vendor` để builder CapCut đi kèm.
-- Máy đích cần cài CapCut. Nếu máy đó chưa từng có project CapCut nào, hãy mở CapCut, bấm `Tạo dự án` một lần, sau đó đóng tab edit rồi chạy lại tool để tool lấy schema project mẫu.
+- Máy đích cần cài CapCut. Nếu máy đó chưa từng có project CapCut nào, hãy mở CapCut, bấm `Tạo dự án` một lần,rồi kéo 1 video bất kỳ và 1 đoạn .srt bất kỳ sau đó đóng tab edit rồi chạy lại tool để tool lấy schema project mẫu.
 - Folder video có thể chứa cả video ngang và dọc, tool sẽ tự lọc chỉ lấy video ngang 16:9.
 
 ## Khi gặp lỗi
