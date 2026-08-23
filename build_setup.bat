@@ -34,6 +34,13 @@ if not defined PY_CMD (
 if exist "%APP_BIN%\ffmpeg.exe" set "PATH=%APP_BIN%;%PATH%"
 if exist "%LOCAL_FFMPEG%\ffmpeg.exe" set "PATH=%LOCAL_FFMPEG%;%PATH%"
 
+if not exist "%APP_BIN%\ffmpeg.exe" if not exist "%LOCAL_FFMPEG%\ffmpeg.exe" (
+    echo.
+    echo [0/4] Thieu FFmpeg, dang chay install_deps.ps1 de tai portable FFmpeg...
+    powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0install_deps.ps1"
+    if not %errorlevel%==0 goto failed
+)
+
 if not exist "%APP_BIN%" mkdir "%APP_BIN%"
 if not exist "%APP_BIN%\ffmpeg.exe" if exist "%LOCAL_FFMPEG%\ffmpeg.exe" copy /y "%LOCAL_FFMPEG%\ffmpeg.exe" "%APP_BIN%\" >nul
 if not exist "%APP_BIN%\ffprobe.exe" if exist "%LOCAL_FFMPEG%\ffprobe.exe" copy /y "%LOCAL_FFMPEG%\ffprobe.exe" "%APP_BIN%\" >nul

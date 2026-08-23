@@ -212,3 +212,19 @@ Nếu CapCut báo không thể dùng dự án:
 1. Xóa project lỗi trong CapCut.
 2. Đảm bảo đã dùng bản tool mới.
 3. Tạo lại project từ giao diện.
+
+## GitHub source vs full setup build
+
+Repo GitHub chi commit source code va cac script build. Cac thu muc runtime lon nhu
+`bin/`, `vendor/`, `dist/`, `installer_output/` khong commit truc tiep vi GitHub
+chan file tren 100MB va `vendor/VOICEVOX` co nhieu file rat lon.
+
+De clone sang may khac va build ra setup day du:
+
+1. Clone repo.
+2. Copy lai `vendor/VOICEVOX` va `vendor/auto_capcut_pro` tu may build goc, hoac tai tu goi Release/dependencies rieng neu da upload.
+3. Chay `build_setup.bat`. Script se tu tai/copy FFmpeg vao `bin/` neu thieu.
+4. File setup se nam tai `installer_output/CapCutVideoToolSetup.exe`.
+
+Neu muon dua ca `vendor` len GitHub, can dung Git LFS hoac GitHub Releases. Khong
+nen commit truc tiep bang Git thuong vi cac file lon se bi GitHub tu choi khi push.
