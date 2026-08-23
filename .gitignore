@@ -48,11 +48,17 @@ dist/
 installer_output/
 *.spec.bak
 
-# Large local runtime bundles.
-# Keep these on the build machine, or distribute them through Releases/LFS.
-bin/
+# Local dependency cache not needed in Git.
 tools/
-vendor/
+
+# Runtime bundles committed through Git LFS.
+!bin/
+!bin/**
+!vendor/
+!vendor/VOICEVOX/
+!vendor/VOICEVOX/**
+!vendor/auto_capcut_pro/
+!vendor/auto_capcut_pro/**
 
 # OS and editor
 .DS_Store
