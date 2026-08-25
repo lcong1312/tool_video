@@ -11,6 +11,7 @@ import hashlib
 import mimetypes
 import importlib.metadata
 import httpx
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from datetime import timedelta
 import tkinter as tk
@@ -45,6 +46,160 @@ SETTINGS_FILENAME = "fish_story_v53_settings.json"
 DEFAULT_VOICE_KEY = "__fish_default__"
 SUPPORTED_AUDIO = [("Audio files", "*.wav *.mp3 *.m4a *.opus"), ("All files", "*.*")]
 SUPPORTED_TEXT_EXTS = {".txt", ".md", ".srt", ".csv", ".json", ".log"}
+
+
+class FishTtsStopped(Exception):
+    pass
+
+
+def split_fish_api_key_value(value: str):
+    if not value:
+        return []
+    parts = re.split(r"[\s,;|]+", value.strip())
+    return [part.strip().strip('"').strip("'") for part in parts if part.strip()]
+
+
+def fish_api_key_env_sort(name: str):
+    match = re.search(r"(\d+)$", name)
+    if match:
+        return (0, int(match.group(1)), name)
+    return (1, 0, name)
+
+
+def fish_api_keys_from_env():
+    keys = []
+    seen = set()
+
+    def add_many(value: str):
+        for key in split_fish_api_key_value(value):
+            if key and key not in seen:
+                seen.add(key)
+                keys.append(key)
+
+    add_many(os.getenv("FISH_API_KEY", ""))
+    add_many(os.getenv("FISH_API_KEYS", ""))
+
+    extra_names = sorted(
+        (
+            name
+            for name in os.environ
+            if name.startswith("FISH_API_KEY_") and name != "FISH_API_KEYS"
+        ),
+        key=fish_api_key_env_sort,
+    )
+    for name in extra_names:
+        add_many(os.getenv(name, ""))
+
+    return keys
+
+
+def first_fish_api_key_from_env():
+    keys = fish_api_keys_from_env()
+    return keys[0] if keys else ""
+
+
+def synthesize_fish_tts_units(
+    *,
+    units,
+    s2_requests,
+    chunks_dir: Path,
+    model: str,
+    speed: float,
+    latency: str,
+    reference_id: str,
+    retry_count: int,
+    api_keys,
+    stop_requested=None,
+    on_error=None,
+    on_progress=None,
+):
+    if not api_keys:
+        raise RuntimeError("Chua co FISH_API_KEY trong file .env")
+    if len(units) != len(s2_requests):
+        raise ValueError("So cau doc va request S2 khong khop.")
+
+    total = len(units)
+    worker_count = max(1, min(len(api_keys), total))
+
+    def is_stopped():
+        return bool(stop_requested and stop_requested())
+
+    def synthesize_one(index: int, unit, request_text: str):
+        if is_stopped():
+            raise FishTtsStopped()
+
+        output_path = chunks_dir / f"chunk_{index:04d}.wav"
+        last_error = None
+        for attempt in range(1, retry_count + 2):
+            if is_stopped():
+                raise FishTtsStopped()
+
+            key_index = (index + attempt - 2) % len(api_keys)
+            try:
+                request_args = {
+                    "text": request_text,
+                    "model": model,
+                    "format": "wav",
+                    "speed": speed,
+                    "latency": latency,
+                }
+                if reference_id:
+                    request_args["reference_id"] = reference_id
+
+                client = FishAudio(api_key=api_keys[key_index])
+                audio = client.tts.convert(**request_args)
+                save(audio, str(output_path))
+                duration = wav_duration_seconds(output_path)
+                pause_ms = int(unit["pause_ms"])
+                chunk_text = unit["text"]
+                reason = unit.get("reason", "")
+                return {
+                    "index": index,
+                    "output_path": output_path,
+                    "duration": duration,
+                    "pause_ms": pause_ms,
+                    "pause_plan_line": (
+                        f"{index:04d} | speech={duration:.3f}s | pause={pause_ms}ms | "
+                        f"reason={reason} | {chunk_text}"
+                    ),
+                    "s2_plan_line": (
+                        f"{index:04d}\nORIGINAL: {chunk_text}\nSENT TO FISH: {request_text}\n"
+                    ),
+                    "attempt": attempt,
+                    "key_number": key_index + 1,
+                }
+            except Exception as exc:
+                last_error = exc
+                if on_error:
+                    on_error(index, attempt, key_index + 1, exc)
+                time.sleep(1)
+
+        raise RuntimeError(f"Khong tao duoc doan {index}. Loi cuoi: {last_error}")
+
+    results = [None] * total
+    completed = 0
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = {
+            executor.submit(synthesize_one, index, unit, s2_requests[index - 1]): index
+            for index, unit in enumerate(units, start=1)
+        }
+        for future in as_completed(futures):
+            if is_stopped():
+                for pending in futures:
+                    pending.cancel()
+                raise FishTtsStopped()
+            try:
+                result = future.result()
+            except Exception:
+                for pending in futures:
+                    pending.cancel()
+                raise
+            results[result["index"] - 1] = result
+            completed += 1
+            if on_progress:
+                on_progress(completed, total, result, worker_count)
+
+    return results
 
 LANGUAGES = {
     "ja": {
@@ -1784,10 +1939,11 @@ class FishStoryGUI:
     def _run_refresh_voices(self):
         try:
             load_dotenv(app_root_dir() / ".env", override=True)
-            if not os.getenv("FISH_API_KEY"):
+            api_key = first_fish_api_key_from_env()
+            if not api_key:
                 raise RuntimeError("Chưa có FISH_API_KEY trong file .env")
 
-            client = FishAudio()
+            client = FishAudio(api_key=api_key)
             voices = []
             page = 1
             while page <= 10:
@@ -1923,7 +2079,7 @@ class FishStoryGUI:
     def open_env(self):
         env_path = app_root_dir() / ".env"
         if not env_path.exists():
-            env_path.write_text("FISH_API_KEY=\nREFERENCE_ID=\n", encoding="utf-8")
+            env_path.write_text("FISH_API_KEY=\nFISH_API_KEYS=\nREFERENCE_ID=\n", encoding="utf-8")
         os.startfile(str(env_path))
 
     def preview_s2_cues(self):
@@ -2085,10 +2241,10 @@ class FishStoryGUI:
     def _run_generate(self, params):
         try:
             load_dotenv(app_root_dir() / ".env", override=True)
-            if not os.getenv("FISH_API_KEY"):
+            api_keys = fish_api_keys_from_env()
+            if not api_keys:
                 raise RuntimeError("Chưa có FISH_API_KEY trong file .env")
 
-            client = FishAudio()
             cleaned_text, ellipsis_cleanup_report = sanitize_problem_ellipsis(
                 params["text"], params["ellipsis_ms"]
             )
@@ -2162,6 +2318,7 @@ class FishStoryGUI:
                 "input_characters": len(params["text"]),
                 "speech_units": len(units),
                 "dangerous_ellipsis_lines_cleaned": len(ellipsis_cleanup_report),
+                "api_key_count": len(api_keys),
                 "api_key_saved": False,
             }
             (job_dir / "preset_used.json").write_text(
@@ -2192,6 +2349,7 @@ class FishStoryGUI:
                 f"Dấu …: {params['ellipsis_ms']} ms",
                 f"Xuống đoạn: {params['paragraph_ms']} ms",
                 f"Dòng dấu ba chấm nguy hiểm đã xử lý: {len(ellipsis_cleanup_report)}",
+                f"So API key kha dung: {len(api_keys)}",
                 "",
                 "API key không được lưu trong output.",
             ]
@@ -2205,70 +2363,47 @@ class FishStoryGUI:
                     "hoặc bắt đầu bằng dấu ba chấm."
                 )
 
-            wav_paths = []
-            durations = []
-            pauses_ms = []
-            pause_plan_lines = []
-            s2_plan_lines = []
-            tagged_script_blocks = []
             s2_requests = (
                 build_s2_requests(units, params["s2_cue_mode"], params["language_code"])
                 if params["auto_s2_cues"]
                 else [unit["text"] for unit in units]
             )
-            for index, unit in enumerate(units, start=1):
-                chunk_text = unit["text"]
-                request_text = s2_requests[index - 1]
-                tagged_script_blocks.append(request_text)
-                if self.stop_requested:
-                    self.ui(self.status_text.set, "Đã dừng")
-                    self.log("Đã dừng theo yêu cầu.")
-                    return
+            tagged_script_blocks = list(s2_requests)
+            worker_count = max(1, min(len(api_keys), len(units)))
+            self.log(f"Fish API keys: {len(api_keys)}; chay song song {worker_count} luong.")
 
-                self.ui(self.status_text.set, f"Đang tạo đoạn {index}/{len(units)}")
-                self.ui(self.progress_value.set, ((index - 1) / len(units)) * 100)
-                self.log(f"Tạo đoạn {index}/{len(units)}...")
+            def on_error(index, attempt, key_number, exc):
+                self.log(f"Loi doan {index}, key #{key_number}, lan {attempt}: {exc}")
 
-                output_path = chunks_dir / f"chunk_{index:04d}.wav"
-                success = False
-                last_error = None
-                for attempt in range(1, params["retry_count"] + 2):
-                    try:
-                        request_args = {
-                            "text": request_text,
-                            "model": params["model"],
-                            "format": "wav",
-                            "speed": params["speed"],
-                            "latency": params["latency"],
-                        }
-                        if params["reference_id"]:
-                            request_args["reference_id"] = params["reference_id"]
+            def on_progress(done, total, result, workers):
+                index = result["index"]
+                unit = units[index - 1]
+                self.ui(self.status_text.set, f"Dang tao song song {done}/{total}")
+                self.ui(self.progress_value.set, (done / total) * 100)
+                self.log(
+                    f"OK doan {index}/{total}: {result['duration']:.2f}s + nghi "
+                    f"{unit['pause_ms']} ms ({unit['reason']})"
+                )
 
-                        audio = client.tts.convert(**request_args)
-                        save(audio, str(output_path))
-                        duration = wav_duration_seconds(output_path)
-                        wav_paths.append(output_path)
-                        durations.append(duration)
-                        pauses_ms.append(int(unit["pause_ms"]))
-                        pause_plan_lines.append(
-                            f"{index:04d} | speech={duration:.3f}s | pause={unit['pause_ms']}ms | "
-                            f"reason={unit['reason']} | {chunk_text}"
-                        )
-                        s2_plan_lines.append(
-                            f"{index:04d}\nORIGINAL: {chunk_text}\nSENT TO FISH: {request_text}\n"
-                        )
-                        self.log(
-                            f"OK đoạn {index}: {duration:.2f} giây + nghỉ {unit['pause_ms']} ms ({unit['reason']})"
-                        )
-                        success = True
-                        break
-                    except Exception as exc:
-                        last_error = exc
-                        self.log(f"Lỗi đoạn {index}, lần {attempt}: {exc}")
-                        time.sleep(1)
-
-                if not success:
-                    raise RuntimeError(f"Không tạo được đoạn {index}. Lỗi cuối: {last_error}")
+            results = synthesize_fish_tts_units(
+                units=units,
+                s2_requests=s2_requests,
+                chunks_dir=chunks_dir,
+                model=params["model"],
+                speed=params["speed"],
+                latency=params["latency"],
+                reference_id=params["reference_id"],
+                retry_count=params["retry_count"],
+                api_keys=api_keys,
+                stop_requested=lambda: self.stop_requested,
+                on_error=on_error,
+                on_progress=on_progress,
+            )
+            wav_paths = [result["output_path"] for result in results]
+            durations = [result["duration"] for result in results]
+            pauses_ms = [result["pause_ms"] for result in results]
+            pause_plan_lines = [result["pause_plan_line"] for result in results]
+            s2_plan_lines = [result["s2_plan_line"] for result in results]
 
             final_wav = job_dir / "final.wav"
             final_srt = job_dir / "final.srt"
@@ -2291,6 +2426,9 @@ class FishStoryGUI:
             self.log(f"Báo cáo dấu ba chấm: {job_dir / 'ellipsis_cleanup_report.txt'}")
             self.log(f"Preset đã dùng: {job_dir / 'preset_used.txt'}")
             os.startfile(str(job_dir))
+        except FishTtsStopped:
+            self.ui(self.status_text.set, "Đã dừng")
+            self.log("Đã dừng theo yêu cầu.")
         except Exception as exc:
             self.ui(self.status_text.set, "Lỗi")
             self.log(f"LỖI: {exc}")
@@ -2344,7 +2482,7 @@ class FishStoryGUI:
         report = []
         try:
             load_dotenv(app_root_dir() / ".env", override=True)
-            api_key = os.getenv("FISH_API_KEY", "").strip()
+            api_key = first_fish_api_key_from_env()
             if not api_key:
                 raise RuntimeError("Chưa có FISH_API_KEY trong file .env")
 

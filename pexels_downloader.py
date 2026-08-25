@@ -15,6 +15,7 @@ from typing import Callable, Any
 
 PEXELS_API_BASE = "https://api.pexels.com/v1/videos"
 NETWORK_RETRIES = 3
+PEXELS_MAX_DOWNLOAD_WORKERS = 32
 FALLBACK_QUERIES = [
     "nature",
     "landscape",
@@ -193,12 +194,84 @@ def _query_plan(query: str) -> list[str]:
         seen.add(key)
         terms.append(clean)
 
-    if query.strip():
-        add(query)
+    for term in re.split(r"[,;\r\n]+", query or ""):
+        add(term)
     for fallback in FALLBACK_QUERIES:
         add(fallback)
     add("")
     return terms
+
+
+def split_pexels_api_key_value(value: str | None) -> list[str]:
+    keys: list[str] = []
+    for part in re.split(r"[\s,;]+", value or ""):
+        clean = part.strip().strip("\"'")
+        if clean:
+            keys.append(clean)
+    return keys
+
+
+def _pexels_api_key_env_sort(name: str) -> tuple[int, int, str]:
+    if name == "PEXELS_API_KEY":
+        return (0, 0, name)
+    if name == "PEXELS_API_KEYS":
+        return (1, 0, name)
+    match = re.fullmatch(r"PEXELS_API_KEY_(\d+)", name)
+    if match:
+        return (2, int(match.group(1)), name)
+    return (3, 0, name)
+
+
+def pexels_api_keys_from_env(*extra_values: str | None) -> list[str]:
+    keys: list[str] = []
+    seen: set[str] = set()
+
+    def add(value: str | None) -> None:
+        for key in split_pexels_api_key_value(value):
+            if key in seen:
+                continue
+            seen.add(key)
+            keys.append(key)
+
+    for value in extra_values:
+        add(value)
+
+    names = [
+        name
+        for name in os.environ
+        if name in {"PEXELS_API_KEY", "PEXELS_API_KEYS"} or re.fullmatch(r"PEXELS_API_KEY_\d+", name)
+    ]
+    for name in sorted(names, key=_pexels_api_key_env_sort):
+        add(os.environ.get(name))
+    return keys
+
+
+def _is_pexels_key_error(exc: RuntimeError) -> bool:
+    text = str(exc).lower()
+    return "gioi han" in text or "khong dung" in text or "401" in text or "429" in text
+
+
+def _request_json_with_key_pool(
+    url: str,
+    api_keys: list[str],
+    start_index: int,
+    *,
+    progress: Callable[[str], None] | None = None,
+    label: str = "Pexels API",
+) -> tuple[dict[str, Any], dict[str, str], int]:
+    last_error: RuntimeError | None = None
+    for offset in range(len(api_keys)):
+        key_index = (start_index + offset) % len(api_keys)
+        try:
+            data, headers = _request_json_with_retry(url, api_keys[key_index], progress=progress, label=label)
+            return data, headers, (key_index + 1) % len(api_keys)
+        except RuntimeError as exc:
+            last_error = exc
+            if not _is_pexels_key_error(exc):
+                raise
+            if len(api_keys) > 1 and progress:
+                progress(f"Pexels API key #{key_index + 1} bi gioi han/khong hop le, thu key khac...")
+    raise last_error or RuntimeError(f"{label} khong goi duoc bang bat ky Pexels API key nao.")
 
 
 def download_pexels_videos(
@@ -213,9 +286,9 @@ def download_pexels_videos(
     max_workers: int = 6,
     progress: Callable[[str], None] | None = None,
 ) -> list[Path]:
-    api_key = api_key.strip() or os.environ.get("PEXELS_API_KEY", "").strip()
-    if not api_key:
-        raise RuntimeError("Chua nhap Pexels API key. Ban co the nhap trong GUI hoac dat bien moi truong PEXELS_API_KEY.")
+    api_keys = pexels_api_keys_from_env(api_key)
+    if not api_keys:
+        raise RuntimeError("Chua co Pexels API key. Hay them PEXELS_API_KEY vao file .env.")
     if target_count <= 0:
         raise RuntimeError("So video can tai tu Pexels phai lon hon 0.")
 
@@ -242,6 +315,9 @@ def download_pexels_videos(
     per_page = 80
     candidates: list[tuple[Path, dict[str, Any], dict[str, Any]]] = []
     max_pages_per_query = min(20, max(3, (target_count // per_page) + 3))
+    api_key_index = 0
+    if progress:
+        progress(f"Pexels API keys: {len(api_keys)}")
 
     for search_query in _query_plan(query):
         if len(result_paths) + len(candidates) >= target_count:
@@ -260,7 +336,13 @@ def download_pexels_videos(
                 label = search_query or "popular"
                 progress(f'Dang goi Pexels API "{label}" trang {page}...')
             try:
-                data, headers = _request_json_with_retry(url, api_key, progress=progress, label=f'Pexels API "{label}" trang {page}')
+                data, headers, api_key_index = _request_json_with_key_pool(
+                    url,
+                    api_keys,
+                    api_key_index,
+                    progress=progress,
+                    label=f'Pexels API "{label}" trang {page}',
+                )
             except RuntimeError as exc:
                 if "mang/timeout" not in str(exc) and "timed out" not in str(exc).lower():
                     raise
@@ -302,7 +384,7 @@ def download_pexels_videos(
 
     needed = target_count - len(result_paths)
     candidates = candidates[:needed]
-    max_workers = min(10, max(1, int(max_workers)))
+    max_workers = min(PEXELS_MAX_DOWNLOAD_WORKERS, max(1, int(max_workers)))
     if candidates and progress:
         progress(f"Bat dau tai {len(candidates)} video Pexels bang {max_workers} luong...")
 

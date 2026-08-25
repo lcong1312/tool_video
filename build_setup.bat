@@ -10,6 +10,62 @@ set "SETUP_EXE=installer_output\CapCutVideoToolSetup.exe"
 set "APP_BIN=%~dp0bin"
 set "LOCAL_FFMPEG=%~dp0tools\ffmpeg\bin"
 
+if not exist "%SPEC_FILE%" (
+    echo [ERROR] Khong tim thay %SPEC_FILE%.
+    echo Hay chay build_setup.bat trong thu muc source goc cua project.
+    pause
+    exit /b 1
+)
+
+if not exist "installer" mkdir "installer"
+if not exist "%ISS_FILE%" (
+    echo [WARN] Khong thay %ISS_FILE%, dang tao lai file Inno Setup script...
+    > "%ISS_FILE%" (
+        echo #define MyAppName "CapCut Video Tool"
+        echo #define MyAppVersion "1.0.0"
+        echo #define MyAppPublisher "CapCut Video Tool"
+        echo #define MyAppExeName "CapCutVideoTool.exe"
+        echo.
+        echo [Setup]
+        echo AppId={{D802E6D2-5344-42BC-B91E-44A9C43A7B78}
+        echo AppName={#MyAppName}
+        echo AppVersion={#MyAppVersion}
+        echo AppPublisher={#MyAppPublisher}
+        echo DefaultDirName={localappdata}\Programs\CapCutVideoTool
+        echo DefaultGroupName={#MyAppName}
+        echo DisableProgramGroupPage=yes
+        echo OutputDir=..\installer_output
+        echo OutputBaseFilename=CapCutVideoToolSetup
+        echo Compression=lzma2/ultra64
+        echo SolidCompression=yes
+        echo WizardStyle=modern
+        echo ArchitecturesAllowed=x64compatible
+        echo ArchitecturesInstallIn64BitMode=x64compatible
+        echo PrivilegesRequired=lowest
+        echo SetupIconFile=..\assets\app_icon.ico
+        echo UninstallDisplayIcon={app}\{#MyAppExeName}
+        echo.
+        echo [Languages]
+        echo Name: "english"; MessagesFile: "compiler:Default.isl"
+        echo.
+        echo [Files]
+        echo Source: "..\dist\CapCutVideoTool\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+        echo.
+        echo [Icons]
+        echo Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
+        echo Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
+        echo.
+        echo [Run]
+        echo Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
+    )
+)
+
+if not exist "%ISS_FILE%" (
+    echo [ERROR] Khong tao duoc %ISS_FILE%.
+    pause
+    exit /b 1
+)
+
 echo ========================================
 echo Build CapCut Video Tool setup
 echo ========================================
@@ -97,6 +153,7 @@ if %errorlevel%==0 set "ISCC_CMD=iscc"
 
 if not defined ISCC_CMD if exist "%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe" set "ISCC_CMD=%ProgramFiles(x86)%\Inno Setup 6\ISCC.exe"
 if not defined ISCC_CMD if exist "%ProgramFiles%\Inno Setup 6\ISCC.exe" set "ISCC_CMD=%ProgramFiles%\Inno Setup 6\ISCC.exe"
+if not defined ISCC_CMD if exist "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" set "ISCC_CMD=%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe"
 
 if not defined ISCC_CMD (
     echo [ERROR] Khong tim thay Inno Setup Compiler ^(ISCC.exe^).

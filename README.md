@@ -82,9 +82,9 @@ GUI có thêm tùy chọn `Tải từ Pexels`.
 
 Khi bật tùy chọn này:
 
-1. Nhập `API key` của Pexels.
-2. Nhập `Từ khóa`, ví dụ `nature`, `city`, `business`, `travel`.
-3. Nhập `Luồng tải`, tối đa `10`, để tải nhiều video song song.
+1. Thêm `PEXELS_API_KEY` vào file `.env`.
+2. Nhập `Từ khóa`, ví dụ `nature`, `city`, `business`, `travel`. Có thể nhập nhiều cụm cách nhau bằng dấu phẩy; tool sẽ tìm lần lượt từng cụm.
+3. Nhập `Luồng tải`, tối đa `32`, để tải nhiều video song song.
 4. Ô `Folder video` sẽ trở thành thư mục cache để lưu video Pexels đã tải.
 5. Bấm `Tạo video` như bình thường.
 
@@ -100,13 +100,34 @@ Khi tải từ Pexels, tool luôn chỉ lấy video ngang 16:9. Bạn không c�
 
 Nếu để trống từ khóa, tool sẽ tải video phổ biến từ Pexels.
 
-Sau lần nhập đầu tiên, API key Pexels sẽ được lưu trong file:
+API key Pexels được đọc từ file:
 
 ```text
-config.json
+.env
 ```
 
-ở cùng thư mục tool. Lần sau mở GUI, tool sẽ tự điền lại API key từ file này. File này có chứa key riêng của bạn nên không nên đưa lên GitHub hoặc gửi cho người khác.
+ở cùng thư mục tool:
+
+```env
+PEXELS_API_KEY=PASTE_YOUR_PEXELS_KEY_HERE
+```
+
+Nếu có nhiều Pexels API key, có thể thêm dạng danh sách:
+
+```env
+PEXELS_API_KEYS=PEXELS_KEY_2,PEXELS_KEY_3
+```
+
+hoặc tách từng dòng:
+
+```env
+PEXELS_API_KEY_2=PEXELS_KEY_2
+PEXELS_API_KEY_3=PEXELS_KEY_3
+```
+
+File này có chứa key riêng của bạn nên không nên đưa lên GitHub hoặc gửi cho người khác.
+
+Trong GUI, tab `Setting` có thể thêm Fish API key và Pexels API key mới vào `.env` mà không cần sửa file thủ công.
 
 Tool lưu thông tin nguồn Pexels tại:
 

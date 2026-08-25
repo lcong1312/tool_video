@@ -9,6 +9,7 @@ import math
 import json
 import os
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -34,23 +35,23 @@ from capcut_draft import (
     create_capcut_project_from_clips,
     prepare_capcut_project,
 )
-from pexels_downloader import download_pexels_videos
+from pexels_downloader import PEXELS_MAX_DOWNLOAD_WORKERS, download_pexels_videos, pexels_api_keys_from_env
 from voicevox_tts import VoicevoxSettings, synthesize_text_file
 from dotenv import load_dotenv
-from fishaudio import FishAudio
-from fishaudio.utils import save
 from fish_mexico_gui import (
     build_pause_units,
     build_s2_requests,
+    fish_api_keys_from_env,
     merge_wavs_with_pauses,
     sanitize_problem_ellipsis,
-    wav_duration_seconds,
+    synthesize_fish_tts_units,
     write_srt_with_pauses,
 )
 
 
 APP_DIR = Path(__file__).resolve().parent
 APP_CONFIG = APP_DIR / "config.json"
+ENV_FILE = APP_DIR / ".env"
 FISH_MEXICO_DIR = APP_DIR
 FISH_MEXICO_GUI = APP_DIR / "fish_mexico_gui.py"
 FISH_MEXICO_RUN = APP_DIR / "run_setting_fish.bat"
@@ -105,7 +106,7 @@ def find_capcut() -> Path | None:
 class CapCutVideoApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("SRT to CapCut Video")
+        self.title("Tool Video CapCut")
         self.geometry("860x760")
         self.minsize(820, 720)
         self.config_data = load_app_config()
@@ -169,12 +170,14 @@ class CapCutVideoApp(tk.Tk):
         self.use_pexels_var = tk.BooleanVar(value=False)
         self.source_var = tk.StringVar(value="local")
         self.pexels_query_var = tk.StringVar(value=str(self.config_data.get("pexels_query") or "nature"))
-        self.pexels_threads_var = tk.StringVar(value=str(self.config_data.get("pexels_threads") or "10"))
-        self.pexels_api_key_var = tk.StringVar(
-            value=str(self.config_data.get("pexels_api_key") or os.environ.get("PEXELS_API_KEY", ""))
-        )
+        self.pexels_threads_var = tk.StringVar(value=str(self.config_data.get("pexels_threads") or PEXELS_MAX_DOWNLOAD_WORKERS))
         self.status_var = tk.StringVar(value="Sẵn sàng")
         self.percent_var = tk.StringVar(value="0%")
+        self.fish_key_count_var = tk.StringVar(value="Fish API keys: 0")
+        self.pexels_key_count_var = tk.StringVar(value="Pexels API keys: 0")
+        self.new_fish_api_key_var = tk.StringVar()
+        self.new_pexels_api_key_var = tk.StringVar()
+        self.settings_status_var = tk.StringVar(value="")
         capcut = find_capcut()
         self.capcut_var = tk.StringVar(value=str(capcut) if capcut else "")
 
@@ -183,7 +186,15 @@ class CapCutVideoApp(tk.Tk):
         self.reload_fish_voice_settings()
 
     def _build_ui(self) -> None:
-        scroll_host = ttk.Frame(self)
+        self.tabs = ttk.Notebook(self)
+        self.tabs.pack(fill="both", expand=True)
+        tool_tab = ttk.Frame(self.tabs)
+        setting_tab = ttk.Frame(self.tabs, padding=18)
+        self.tabs.add(tool_tab, text="Tool Video")
+        self.tabs.add(setting_tab, text="Setting")
+        self.tabs.bind("<<NotebookTabChanged>>", lambda _event: self.refresh_api_key_counts())
+
+        scroll_host = ttk.Frame(tool_tab)
         scroll_host.pack(fill="both", expand=True)
         scroll_host.rowconfigure(0, weight=1)
         scroll_host.columnconfigure(0, weight=1)
@@ -468,11 +479,6 @@ class CapCutVideoApp(tk.Tk):
         ttk.Entry(self.pexels_frame, textvariable=self.pexels_threads_var, width=8).grid(
             row=0, column=3, sticky="w", pady=(0, 6)
         )
-        ttk.Label(self.pexels_frame, text="API key").grid(row=1, column=0, sticky="w", padx=(0, 8))
-        ttk.Entry(self.pexels_frame, textvariable=self.pexels_api_key_var, show="*", width=34).grid(
-            row=1, column=1, columnspan=3, sticky="ew"
-        )
-
         actions = ttk.Frame(root)
         actions.grid(row=9, column=0, columnspan=3, sticky="ew", pady=(10, 8))
         actions.columnconfigure(0, weight=1)
@@ -491,8 +497,96 @@ class CapCutVideoApp(tk.Tk):
         self.log = tk.Text(root, height=14, wrap="word")
         self.log.grid(row=11, column=0, columnspan=3, sticky="nsew")
         root.rowconfigure(11, weight=1)
+        self._build_settings_ui(setting_tab)
+        self.refresh_api_key_counts()
         self.update_source_ui()
         self.update_voicevox_ui()
+
+    def _build_settings_ui(self, parent: ttk.Frame) -> None:
+        parent.columnconfigure(0, weight=1)
+        ttk.Label(parent, text="API keys").grid(row=0, column=0, sticky="w", pady=(0, 12))
+
+        fish = ttk.LabelFrame(parent, text="Fish")
+        fish.grid(row=1, column=0, sticky="ew", pady=(0, 12))
+        fish.columnconfigure(1, weight=1)
+        ttk.Label(fish, textvariable=self.fish_key_count_var).grid(row=0, column=0, columnspan=3, sticky="w", padx=10, pady=(8, 6))
+        ttk.Label(fish, text="API key mới").grid(row=1, column=0, sticky="w", padx=10, pady=(0, 10))
+        ttk.Entry(fish, textvariable=self.new_fish_api_key_var, show="*").grid(
+            row=1, column=1, sticky="ew", padx=(0, 8), pady=(0, 10)
+        )
+        ttk.Button(fish, text="Thêm", command=lambda: self.add_api_key("fish")).grid(
+            row=1, column=2, sticky="ew", padx=(0, 10), pady=(0, 10)
+        )
+
+        pexels = ttk.LabelFrame(parent, text="Pexels")
+        pexels.grid(row=2, column=0, sticky="ew", pady=(0, 12))
+        pexels.columnconfigure(1, weight=1)
+        ttk.Label(pexels, textvariable=self.pexels_key_count_var).grid(row=0, column=0, columnspan=3, sticky="w", padx=10, pady=(8, 6))
+        ttk.Label(pexels, text="API key mới").grid(row=1, column=0, sticky="w", padx=10, pady=(0, 10))
+        ttk.Entry(pexels, textvariable=self.new_pexels_api_key_var, show="*").grid(
+            row=1, column=1, sticky="ew", padx=(0, 8), pady=(0, 10)
+        )
+        ttk.Button(pexels, text="Thêm", command=lambda: self.add_api_key("pexels")).grid(
+            row=1, column=2, sticky="ew", padx=(0, 10), pady=(0, 10)
+        )
+
+        controls = ttk.Frame(parent)
+        controls.grid(row=3, column=0, sticky="ew", pady=(4, 0))
+        ttk.Label(controls, textvariable=self.settings_status_var).pack(side="left")
+
+    def refresh_api_key_counts(self) -> None:
+        load_dotenv(ENV_FILE, override=True)
+        fish_count = len(fish_api_keys_from_env())
+        pexels_count = len(pexels_api_keys_from_env())
+        self.fish_key_count_var.set(f"Tổng key hiện tại: {fish_count}")
+        self.pexels_key_count_var.set(f"Tổng key hiện tại: {pexels_count}")
+
+    def _append_env_list_value(self, variable_name: str, value: str) -> None:
+        text = ENV_FILE.read_text(encoding="utf-8-sig") if ENV_FILE.is_file() else ""
+        lines = text.splitlines()
+        pattern = re.compile(rf"^\s*{re.escape(variable_name)}\s*=")
+        for index, line in enumerate(lines):
+            if not pattern.match(line):
+                continue
+            current = line.split("=", 1)[1].strip()
+            lines[index] = f"{variable_name}={current},{value}" if current else f"{variable_name}={value}"
+            break
+        else:
+            if lines and lines[-1].strip():
+                lines.append(f"{variable_name}={value}")
+            elif lines:
+                lines[-1] = f"{variable_name}={value}"
+            else:
+                lines.append(f"{variable_name}={value}")
+        ENV_FILE.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    def add_api_key(self, provider: str) -> None:
+        load_dotenv(ENV_FILE, override=True)
+        if provider == "fish":
+            entry_var = self.new_fish_api_key_var
+            list_var = "FISH_API_KEYS"
+            existing = set(fish_api_keys_from_env())
+            label = "Fish"
+        else:
+            entry_var = self.new_pexels_api_key_var
+            list_var = "PEXELS_API_KEYS"
+            existing = set(pexels_api_keys_from_env())
+            label = "Pexels"
+
+        api_key = entry_var.get().strip()
+        if not api_key:
+            messagebox.showwarning("Thiếu API key", f"Bạn chưa nhập {label} API key.")
+            return
+        if api_key in existing:
+            messagebox.showinfo("API key đã có", f"{label} API key này đã tồn tại trong .env.")
+            entry_var.set("")
+            return
+
+        self._append_env_list_value(list_var, api_key)
+        load_dotenv(ENV_FILE, override=True)
+        entry_var.set("")
+        self.refresh_api_key_counts()
+        self.settings_status_var.set(f"Đã thêm {label} API key vào .env")
 
     def _path_row(self, parent: ttk.Frame, row: int, label: str, variable: tk.StringVar, command) -> None:
         ttk.Label(parent, text=label).grid(row=row, column=0, sticky="w", pady=5)
@@ -774,7 +868,7 @@ class CapCutVideoApp(tk.Tk):
         self.reload_fish_voice_settings()
 
     def save_pexels_config(self) -> None:
-        self.config_data["pexels_api_key"] = self.pexels_api_key_var.get().strip()
+        self.config_data.pop("pexels_api_key", None)
         self.config_data["pexels_query"] = self.pexels_query_var.get().strip()
         self.config_data["pexels_threads"] = self.pexels_threads_var.get().strip()
         self.config_data["voicevox_speaker"] = self.voice_speaker_var.get().strip()
@@ -916,7 +1010,8 @@ class CapCutVideoApp(tk.Tk):
 
     def synthesize_fish_mexico(self) -> tuple[Path, Path]:
         load_dotenv(APP_DIR / ".env", override=True)
-        if not os.getenv("FISH_API_KEY"):
+        api_keys = fish_api_keys_from_env()
+        if not api_keys:
             raise RuntimeError("Chưa có FISH_API_KEY trong file .env")
 
         text_path = self.fish_mexico_text_path()
@@ -978,60 +1073,44 @@ class CapCutVideoApp(tk.Tk):
         )
 
         reference_id = self.fish_voice_id_var.get().strip()
-        client = FishAudio()
         language_code = self.current_fish_language_code()
         s2_requests = (
             build_s2_requests(units, self.fish_s2_mode_var.get().strip() or "natural", language_code)
             if self.fish_auto_s2_var.get()
             else [unit["text"] for unit in units]
         )
-        wav_paths = []
-        durations = []
-        pauses_ms = []
-        pause_plan_lines = []
-        s2_plan_lines = []
-        tagged_blocks = []
         self.ui(self.write_fish_log, f"Fish Mexico: chia thành {len(units)} câu đọc.")
         self.ui(self.write_fish_log, f"Fish Mexico voice_id={reference_id or 'default'}, speed={speed}, max_chars={max_chars}")
+        worker_count = max(1, min(len(api_keys), len(units)))
+        self.ui(self.write_fish_log, f"Fish API keys: {len(api_keys)}; chay song song {worker_count} luong.")
 
-        for index, unit in enumerate(units, start=1):
-            request_text = s2_requests[index - 1]
-            tagged_blocks.append(request_text)
-            output_path = chunks_dir / f"chunk_{index:04d}.wav"
-            last_error = None
-            self.ui(self.set_status, f"Fish Mexico đang tạo câu {index}/{len(units)}")
-            self.ui(self.set_progress, index - 1, len(units))
-            for attempt in range(1, retry_count + 2):
-                try:
-                    request_args = {
-                        "text": request_text,
-                        "model": self.fish_model_var.get().strip() or "s2.1-pro-free",
-                        "format": "wav",
-                        "speed": speed,
-                        "latency": self.fish_latency_var.get().strip() or "normal",
-                    }
-                    if reference_id:
-                        request_args["reference_id"] = reference_id
-                    audio = client.tts.convert(**request_args)
-                    save(audio, str(output_path))
-                    duration = wav_duration_seconds(output_path)
-                    wav_paths.append(output_path)
-                    durations.append(duration)
-                    pauses_ms.append(int(unit["pause_ms"]))
-                    pause_plan_lines.append(
-                        f"{index:04d} | speech={duration:.3f}s | pause={unit['pause_ms']}ms | {unit['text']}"
-                    )
-                    s2_plan_lines.append(
-                        f"{index:04d}\nORIGINAL: {unit['text']}\nSENT TO FISH: {request_text}\n"
-                    )
-                    self.ui(self.write_fish_log, f"Fish Mexico OK {index}/{len(units)}: {duration:.2f}s")
-                    break
-                except Exception as exc:
-                    last_error = exc
-                    self.ui(self.write_fish_log, f"Fish Mexico lỗi câu {index}, lần {attempt}: {exc}")
-                    time.sleep(1)
-            else:
-                raise RuntimeError(f"Không tạo được câu Mexico {index}. Lỗi cuối: {last_error}")
+        def on_error(index, attempt, key_number, exc):
+            self.ui(self.write_fish_log, f"Fish Mexico loi cau {index}, key #{key_number}, lan {attempt}: {exc}")
+
+        def on_progress(done, total, result, workers):
+            self.ui(self.set_status, f"Fish Mexico da tao {done}/{total}")
+            self.ui(self.set_progress, done, total)
+            self.ui(self.write_fish_log, f"Fish Mexico OK {result['index']}/{total}: {result['duration']:.2f}s")
+
+        results = synthesize_fish_tts_units(
+            units=units,
+            s2_requests=s2_requests,
+            chunks_dir=chunks_dir,
+            model=self.fish_model_var.get().strip() or "s2.1-pro-free",
+            speed=speed,
+            latency=self.fish_latency_var.get().strip() or "normal",
+            reference_id=reference_id,
+            retry_count=retry_count,
+            api_keys=api_keys,
+            on_error=on_error,
+            on_progress=on_progress,
+        )
+        wav_paths = [result["output_path"] for result in results]
+        durations = [result["duration"] for result in results]
+        pauses_ms = [result["pause_ms"] for result in results]
+        pause_plan_lines = [result["pause_plan_line"] for result in results]
+        s2_plan_lines = [result["s2_plan_line"] for result in results]
+        tagged_blocks = list(s2_requests)
 
         merge_wavs_with_pauses(wav_paths, pauses_ms, final_wav)
         write_srt_with_pauses(units, durations, final_srt)
@@ -1117,14 +1196,15 @@ class CapCutVideoApp(tk.Tk):
             clip_count = math.ceil(duration / clip_length)
             only_16x9 = True if use_pexels else bool(self.only_16x9_var.get())
             if use_pexels:
+                load_dotenv(APP_DIR / ".env", override=True)
                 self.save_pexels_config()
                 video_folder = Path.cwd() / "pexels_downloads" / srt.stem
                 video_folder.mkdir(parents=True, exist_ok=True)
-                pexels_threads = min(10, max(1, int(self.pexels_threads_var.get())))
+                pexels_threads = min(PEXELS_MAX_DOWNLOAD_WORKERS, max(1, int(self.pexels_threads_var.get())))
                 self.ui(self.set_status, "Đang tải video từ Pexels...")
                 self.ui(self.write_log, f"Pexels: cần {clip_count} video 16:9 theo thời lượng SRT, tải {pexels_threads} luồng.")
                 downloaded = download_pexels_videos(
-                    api_key=self.pexels_api_key_var.get(),
+                    api_key=os.environ.get("PEXELS_API_KEY", ""),
                     query=self.pexels_query_var.get(),
                     output_dir=video_folder,
                     target_count=clip_count,
@@ -1321,6 +1401,7 @@ def main() -> int:
         fish_mexico_gui.main()
         return 0
 
+    load_dotenv(APP_DIR / ".env", override=True)
     app = CapCutVideoApp()
     app.mainloop()
     return 0
