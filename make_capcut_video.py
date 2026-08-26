@@ -18,12 +18,14 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 APP_DIR = Path(__file__).resolve().parent
 APP_BIN = APP_DIR / "bin"
+MAX_RENDER_WORKERS = 32
 SUBPROCESS_CREATIONFLAGS = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 _ENCODER_PROBE_CACHE: dict[str, bool] = {}
 
@@ -70,7 +72,7 @@ def encoder_is_runtime_available(encoder: str) -> bool:
                 "-f",
                 "lavfi",
                 "-i",
-                "testsrc2=size=128x72:rate=30",
+                "testsrc2=size=1920x1080:rate=30",
                 "-t",
                 "0.25",
                 "-an",
@@ -96,6 +98,21 @@ def encoder_args(encoder: str) -> list[str]:
     if encoder == "h264_qsv":
         return ["-c:v", encoder, "-preset", "veryfast", "-global_quality", "23"]
     return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"]
+
+
+def default_render_workers(encoder: str) -> int:
+    if encoder != "libx264":
+        return MAX_RENDER_WORKERS
+    cpu_count = os.cpu_count() or 2
+    return max(1, min(4, cpu_count // 2))
+
+
+def normalize_render_workers(value: int | None, encoder: str) -> int:
+    if encoder != "libx264":
+        return MAX_RENDER_WORKERS
+    if value is None or value <= 0:
+        return default_render_workers(encoder)
+    return max(1, min(MAX_RENDER_WORKERS, int(value)))
 
 
 def run(command: list[str], *, capture: bool = False) -> subprocess.CompletedProcess:
@@ -169,6 +186,34 @@ def ffprobe_duration(path: Path) -> float:
         if stream_duration not in (None, "N/A"):
             return float(stream_duration)
     raise RuntimeError(f"Could not read duration: {path}")
+
+
+def probe_video_durations(
+    videos: list[Path],
+    *,
+    max_workers: int = 8,
+    progress=None,
+) -> dict[Path, float]:
+    workers = min(max(1, int(max_workers)), len(videos))
+    if workers <= 1:
+        durations: dict[Path, float] = {}
+        for index, video in enumerate(videos, start=1):
+            durations[video] = ffprobe_duration(video)
+            if progress:
+                progress(index, len(videos), video)
+        return durations
+
+    durations = {}
+    done = 0
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        future_map = {executor.submit(ffprobe_duration, video): video for video in videos}
+        for future in as_completed(future_map):
+            video = future_map[future]
+            durations[video] = future.result()
+            done += 1
+            if progress:
+                progress(done, len(videos), video)
+    return durations
 
 
 def ffprobe_video_size(path: Path) -> tuple[int, int]:
@@ -254,13 +299,18 @@ def create_clip(
     width: int,
     height: int,
     encoder: str = "libx264",
+    source_duration: float | None = None,
+    clip_start: float | None = None,
 ) -> None:
-    duration = ffprobe_duration(source)
+    duration = source_duration if source_duration is not None else ffprobe_duration(source)
     if duration <= 0:
         raise RuntimeError(f"Could not read duration: {source}")
 
     max_start = max(0.0, duration - clip_length)
-    start = random.uniform(0, max_start) if max_start > 0 else 0
+    if clip_start is None:
+        start = random.uniform(0, max_start) if max_start > 0 else 0
+    else:
+        start = min(max(0.0, clip_start), max_start)
 
     run(
         [
@@ -369,6 +419,12 @@ def main() -> int:
     parser.add_argument("--seed", type=int, help="Random seed for repeatable results")
     parser.add_argument("--no-gpu", action="store_true", help="Disable GPU H.264 encoder")
     parser.add_argument(
+        "--render-workers",
+        type=int,
+        default=0,
+        help="Number of parallel FFmpeg clip renders. GPU always uses max.",
+    )
+    parser.add_argument(
         "--burn-subtitles",
         action="store_true",
         help="Burn the SRT subtitles into the video.",
@@ -381,7 +437,9 @@ def main() -> int:
     if args.seed is not None:
         random.seed(args.seed)
     encoder = choose_h264_encoder(not args.no_gpu)
+    render_workers = normalize_render_workers(args.render_workers, encoder)
     print(f"Encoder: {encoder}")
+    print(f"Render workers: {render_workers}")
 
     srt = args.srt.resolve()
     video_folder = args.video_folder.resolve()
@@ -395,11 +453,13 @@ def main() -> int:
     target_duration = srt_duration(srt)
     clip_count = math.ceil(target_duration / args.clip_length)
     videos = collect_videos(video_folder)
+    video_durations = probe_video_durations(videos, max_workers=min(8, render_workers))
 
     output.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="capcut_clips_") as temp_dir:
         temp_path = Path(temp_dir)
-        clips: list[Path] = []
+        clips: list[Path | None] = [None] * clip_count
+        jobs: list[tuple[int, Path, Path, float, float]] = []
         for index in range(clip_count):
             start_time = index * args.clip_length
             remaining = target_duration - start_time
@@ -407,17 +467,37 @@ def main() -> int:
             if current_clip_length <= 0:
                 break
             source = random.choice(videos)
+            source_duration = video_durations[source]
+            max_start = max(0.0, source_duration - current_clip_length)
+            clip_start = random.uniform(0, max_start) if max_start > 0 else 0.0
             clip_path = temp_path / f"clip_{index:04d}.mp4"
             print(f"[{index + 1}/{clip_count}] {source.name} ({current_clip_length:.3f}s)")
-            create_clip(
-                source,
-                clip_path,
-                clip_length=current_clip_length,
-                width=args.width,
-                height=args.height,
-                encoder=encoder,
-            )
-            clips.append(clip_path)
+            jobs.append((index, source, clip_path, current_clip_length, clip_start))
+
+        with ThreadPoolExecutor(max_workers=min(render_workers, len(jobs) or 1)) as executor:
+            future_map = {
+                executor.submit(
+                    create_clip,
+                    source,
+                    clip_path,
+                    clip_length=current_clip_length,
+                    width=args.width,
+                    height=args.height,
+                    encoder=encoder,
+                    source_duration=video_durations[source],
+                    clip_start=clip_start,
+                ): (index, clip_path)
+                for index, source, clip_path, current_clip_length, clip_start in jobs
+            }
+            for future in as_completed(future_map):
+                index, clip_path = future_map[future]
+                future.result()
+                clips[index] = clip_path
+
+        if any(clip is None for clip in clips):
+            created_count = sum(clip is not None for clip in clips)
+            raise RuntimeError(f"Could not create all clips: {created_count}/{clip_count}")
+        clips = [clip for clip in clips if clip is not None]
 
         if args.burn_subtitles:
             raw_output = temp_path / "joined_without_subtitles.mp4"

@@ -17,6 +17,7 @@ import tempfile
 import threading
 import time
 import tkinter as tk
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -27,6 +28,8 @@ from make_capcut_video import (
     create_clip,
     choose_h264_encoder,
     mux_audio,
+    normalize_render_workers,
+    probe_video_durations,
     require_binary,
     srt_duration,
     validate_video_file,
@@ -157,6 +160,7 @@ class CapCutVideoApp(tk.Tk):
         self.folder_var = tk.StringVar()
         self.output_var = tk.StringVar(value=str(Path.cwd() / "output.mp4"))
         self.clip_length_var = tk.StringVar(value="3")
+        self.render_workers_var = tk.StringVar(value=str(self.config_data.get("render_workers") or "0"))
         self.width_var = tk.StringVar(value="1920")
         self.height_var = tk.StringVar(value="1080")
         self.seed_var = tk.StringVar()
@@ -445,11 +449,13 @@ class CapCutVideoApp(tk.Tk):
 
         ttk.Label(options, text="Seed").grid(row=1, column=0, sticky="w", pady=(8, 0))
         ttk.Entry(options, textvariable=self.seed_var, width=12).grid(row=1, column=1, sticky="w", pady=(8, 0))
+        ttk.Label(options, text="Luồng render").grid(row=1, column=2, sticky="w", pady=(8, 0), padx=(4, 0))
+        ttk.Entry(options, textvariable=self.render_workers_var, width=8).grid(row=1, column=3, sticky="w", pady=(8, 0))
         ttk.Checkbutton(options, text="Gắn phụ đề vào video", variable=self.burn_subtitles_var).grid(
-            row=1, column=3, columnspan=2, sticky="w", pady=(8, 0)
+            row=1, column=4, columnspan=2, sticky="w", pady=(8, 0)
         )
         ttk.Checkbutton(options, text="Tạo project CapCut", variable=self.create_capcut_project_var).grid(
-            row=1, column=5, columnspan=3, sticky="w", pady=(8, 0)
+            row=1, column=6, columnspan=2, sticky="w", pady=(8, 0)
         )
         ttk.Checkbutton(options, text="Dùng GPU", variable=self.use_gpu_var).grid(
             row=2, column=0, columnspan=2, sticky="w", pady=(8, 0)
@@ -871,6 +877,7 @@ class CapCutVideoApp(tk.Tk):
         self.config_data.pop("pexels_api_key", None)
         self.config_data["pexels_query"] = self.pexels_query_var.get().strip()
         self.config_data["pexels_threads"] = self.pexels_threads_var.get().strip()
+        self.config_data["render_workers"] = self.render_workers_var.get().strip()
         self.config_data["voicevox_speaker"] = self.voice_speaker_var.get().strip()
         self.config_data["voicevox_pause_ms"] = self.voice_pause_var.get().strip()
         self.config_data["voicevox_speed"] = self.voice_speed_var.get().strip()
@@ -922,10 +929,16 @@ class CapCutVideoApp(tk.Tk):
         index: int,
         clip_count: int,
         encoder: str,
+        source_durations: dict[Path, float] | None = None,
+        rng_seed: int | None = None,
     ) -> None:
         last_error: Exception | None = None
+        rng = random.Random(rng_seed) if rng_seed is not None else random.Random()
         for attempt in range(1, 11):
-            source = random.choice(videos)
+            source = rng.choice(videos)
+            source_duration = source_durations.get(source) if source_durations else None
+            max_start = max(0.0, (source_duration or 0.0) - clip_length) if source_duration is not None else 0.0
+            clip_start = rng.uniform(0, max_start) if max_start > 0 else None
             self.ui(
                 self.write_log,
                 f"[{index + 1}/{clip_count}] {source.name}" + (f" thử lại {attempt}" if attempt > 1 else ""),
@@ -938,6 +951,8 @@ class CapCutVideoApp(tk.Tk):
                     width=width,
                     height=height,
                     encoder=encoder,
+                    source_duration=source_duration,
+                    clip_start=clip_start,
                 )
                 validate_video_file(clip_path)
                 return
@@ -954,6 +969,8 @@ class CapCutVideoApp(tk.Tk):
                             width=width,
                             height=height,
                             encoder="libx264",
+                            source_duration=source_duration,
+                            clip_start=clip_start,
                         )
                         validate_video_file(clip_path)
                         return
@@ -1136,9 +1153,12 @@ class CapCutVideoApp(tk.Tk):
             height = int(self.height_var.get())
             seed_text = self.seed_var.get().strip()
             encoder = choose_h264_encoder(self.use_gpu_var.get())
+            render_workers_text = self.render_workers_var.get().strip()
+            render_workers = normalize_render_workers(int(render_workers_text) if render_workers_text else 0, encoder)
 
+            seed_value = int(seed_text) if seed_text else None
             if seed_text:
-                random.seed(int(seed_text))
+                random.seed(seed_value)
             if self.use_voicevox_var.get() and self.voice_engine_var.get() == "mexico":
                 self.ui(self.set_status, "Đang tạo voice Fish Mexico và SRT...")
                 voice_audio, srt = self.synthesize_fish_mexico()
@@ -1190,6 +1210,7 @@ class CapCutVideoApp(tk.Tk):
                 raise ValueError(f"Không tìm thấy folder video: {video_folder}")
             if clip_length <= 0:
                 raise ValueError("Mỗi clip phải lớn hơn 0 giây")
+            self.save_pexels_config()
 
             self.ui(self.set_status, "Đang đọc file SRT...")
             duration = srt_duration(srt)
@@ -1228,9 +1249,20 @@ class CapCutVideoApp(tk.Tk):
                 self.ui(self.set_status, text)
 
             videos = collect_videos(video_folder, only_16x9=only_16x9, progress=scan_progress)
+            self.ui(self.set_status, "Dang doc thoi luong video nguon...")
+
+            def duration_progress(index: int, total: int, path: Path) -> None:
+                self.ui(self.set_status, f"Dang doc thoi luong video: {index}/{total} - {path.name}")
+
+            source_durations = probe_video_durations(
+                videos,
+                max_workers=min(8, max(1, render_workers)),
+                progress=duration_progress,
+            )
             output.parent.mkdir(parents=True, exist_ok=True)
 
             self.ui(self.write_log, f"Encoder: {encoder}")
+            self.ui(self.write_log, f"Render threads: {render_workers}")
             if self.use_gpu_var.get() and encoder != "libx264":
                 self.ui(self.write_fish_log if self.voice_engine_var.get() == "mexico" else self.write_log, f"GPU đang bật cho bước dựng video: {encoder}")
             elif self.use_gpu_var.get():
@@ -1290,8 +1322,10 @@ class CapCutVideoApp(tk.Tk):
 
             with tempfile.TemporaryDirectory(prefix="capcut_render_") as temp_dir:
                 temp_path = Path(temp_dir)
-                clips: list[Path] = []
-                clip_durations: list[float] = []
+                clips: list[Path | None] = [None] * clip_count
+                clip_durations: list[float] = [0.0] * clip_count
+                render_jobs: list[tuple[int, Path, float]] = []
+                completed_clips = 0
                 output_created = False
                 for index in range(clip_count):
                     start_time = index * clip_length
@@ -1313,20 +1347,47 @@ class CapCutVideoApp(tk.Tk):
                             self.ui(self.write_log, f"[{index + 1}/{clip_count}] Đã có, bỏ qua: {clip_path.name}")
                         except Exception:
                             clip_path.unlink(missing_ok=True)
-                    if not reused_clip:
-                        self.create_valid_clip(
-                            videos,
-                            clip_path,
-                            clip_length=current_clip_length,
-                            width=width,
-                            height=height,
-                            index=index,
-                            clip_count=clip_count,
-                            encoder=encoder,
-                        )
-                    clips.append(clip_path)
-                    clip_durations.append(current_clip_length)
-                    self.ui(self.set_progress, index + 1, clip_count + 1)
+                    if reused_clip:
+                        clips[index] = clip_path
+                        clip_durations[index] = current_clip_length
+                        completed_clips += 1
+                        self.ui(self.set_progress, completed_clips, clip_count + 1)
+                    else:
+                        render_jobs.append((index, clip_path, current_clip_length))
+
+                if render_jobs:
+                    worker_count = min(render_workers, len(render_jobs))
+                    self.ui(self.write_log, f"Render song song {worker_count} luong cho {len(render_jobs)} clip.")
+                    self.ui(self.set_status, f"Dang render {len(render_jobs)} clip bang {worker_count} luong...")
+                    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+                        future_map = {}
+                        for index, clip_path, current_clip_length in render_jobs:
+                            rng_seed = seed_value + index * 1009 if seed_value is not None else None
+                            future = executor.submit(
+                                self.create_valid_clip,
+                                videos,
+                                clip_path,
+                                clip_length=current_clip_length,
+                                width=width,
+                                height=height,
+                                index=index,
+                                clip_count=clip_count,
+                                encoder=encoder,
+                                source_durations=source_durations,
+                                rng_seed=rng_seed,
+                            )
+                            future_map[future] = (index, clip_path, current_clip_length)
+                        for future in as_completed(future_map):
+                            index, clip_path, current_clip_length = future_map[future]
+                            future.result()
+                            clips[index] = clip_path
+                            clip_durations[index] = current_clip_length
+                            completed_clips += 1
+                            self.ui(self.set_progress, completed_clips, clip_count + 1)
+
+                if any(clip is None for clip in clips):
+                    raise RuntimeError(f"So clip tao duoc khong du: {sum(clip is not None for clip in clips)}/{clip_count}")
+                clips = [clip for clip in clips if clip is not None]
 
                 if self.burn_subtitles_var.get():
                     raw_output = temp_path / "joined_without_subtitles.mp4"
