@@ -160,7 +160,7 @@ class CapCutVideoApp(tk.Tk):
         self.folder_var = tk.StringVar()
         self.output_var = tk.StringVar(value=str(Path.cwd() / "output.mp4"))
         self.clip_length_var = tk.StringVar(value="3")
-        self.render_workers_var = tk.StringVar(value=str(self.config_data.get("render_workers") or "0"))
+        self.render_workers_var = tk.StringVar(value=str(self.config_data.get("render_workers") or "32"))
         self.width_var = tk.StringVar(value="1920")
         self.height_var = tk.StringVar(value="1080")
         self.seed_var = tk.StringVar()

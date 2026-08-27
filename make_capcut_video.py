@@ -101,15 +101,10 @@ def encoder_args(encoder: str) -> list[str]:
 
 
 def default_render_workers(encoder: str) -> int:
-    if encoder != "libx264":
-        return MAX_RENDER_WORKERS
-    cpu_count = os.cpu_count() or 2
-    return max(1, min(4, cpu_count // 2))
+    return MAX_RENDER_WORKERS
 
 
 def normalize_render_workers(value: int | None, encoder: str) -> int:
-    if encoder != "libx264":
-        return MAX_RENDER_WORKERS
     if value is None or value <= 0:
         return default_render_workers(encoder)
     return max(1, min(MAX_RENDER_WORKERS, int(value)))
@@ -421,8 +416,8 @@ def main() -> int:
     parser.add_argument(
         "--render-workers",
         type=int,
-        default=0,
-        help="Number of parallel FFmpeg clip renders. GPU always uses max.",
+        default=MAX_RENDER_WORKERS,
+        help="Number of parallel FFmpeg clip renders. Default is 32.",
     )
     parser.add_argument(
         "--burn-subtitles",
