@@ -22,11 +22,7 @@ def main() -> int:
     if not re.fullmatch(r"\d+\.\d+\.\d+", version):
         raise SystemExit("Version must look like X.Y.Z, for example 1.0.3")
 
-    replace_one(
-        Path("capcut_video_gui.py"),
-        r'^APP_VERSION\s*=\s*"[^"]+"',
-        f'APP_VERSION = "{version}"',
-    )
+    replace_one(Path("app_version.py"), r'^APP_VERSION\s*=\s*"[^"]+"', f'APP_VERSION = "{version}"')
     replace_one(
         Path("installer/CapCutVideoToolSetup.iss"),
         r'^#define MyAppVersion\s+"[^"]+"',

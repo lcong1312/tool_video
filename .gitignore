@@ -47,6 +47,7 @@ build/
 dist/
 installer_output/
 *.spec.bak
+_install_probe/
 
 # Local dependency cache not needed in Git.
 tools/
@@ -56,6 +57,8 @@ tools/
 !tools/start_update_server_hidden.bat
 !tools/stop_update_server.bat
 !tools/set_app_version.py
+!tools/check_build_version.py
+!tools/release_update.bat
 tools/*.zip
 updates/*.pid
 

@@ -22,7 +22,7 @@ if not exist "%ISS_FILE%" (
     echo [WARN] Khong thay %ISS_FILE%, dang tao lai file Inno Setup script...
     > "%ISS_FILE%" (
         echo #define MyAppName "CapCut Video Tool"
-        echo #define MyAppVersion "1.0.0"
+        echo #define MyAppVersion "1.0.4"
         echo #define MyAppPublisher "CapCut Video Tool"
         echo #define MyAppExeName "CapCutVideoTool.exe"
         echo.
@@ -147,6 +147,11 @@ if not exist "%DIST_DIR%\%APP_NAME%.exe" (
     goto failed
 )
 
+echo.
+echo [3.5/4] Kiem tra version trong dist...
+%PY_CMD% tools\check_build_version.py
+if not %errorlevel%==0 goto failed
+
 set "ISCC_CMD="
 where iscc >nul 2>nul
 if %errorlevel%==0 set "ISCC_CMD=iscc"
@@ -171,7 +176,7 @@ if exist "%SETUP_EXE%" (
     echo.
     echo [OK] Da build xong:
     echo %~dp0%SETUP_EXE%
-    pause
+    if not defined NO_PAUSE pause
     exit /b 0
 )
 
@@ -181,5 +186,5 @@ goto failed
 :failed
 echo.
 echo [FAILED] Build setup khong thanh cong.
-pause
+if not defined NO_PAUSE pause
 exit /b 1

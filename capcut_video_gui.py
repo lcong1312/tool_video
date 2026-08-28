@@ -42,6 +42,7 @@ from pexels_downloader import PEXELS_MAX_DOWNLOAD_WORKERS, download_pexels_video
 from voicevox_tts import VoicevoxSettings, synthesize_text_file
 from dotenv import load_dotenv
 from app_update import DEFAULT_MANIFEST_URL, download_installer, fetch_update_info, is_newer_version, run_installer
+from app_version import APP_VERSION
 from fish_mexico_gui import (
     build_pause_units,
     build_s2_requests,
@@ -53,7 +54,6 @@ from fish_mexico_gui import (
 )
 
 
-APP_VERSION = "1.0.3"
 APP_DIR = Path(__file__).resolve().parent
 APP_CONFIG = APP_DIR / "config.json"
 ENV_FILE = APP_DIR / ".env"
@@ -653,8 +653,9 @@ class CapCutVideoApp(tk.Tk):
         def on_done(installer_path: Path) -> None:
             popup.grab_release()
             popup.destroy()
-            if messagebox.askyesno("Tải xong", f"Đã tải update:\n{installer_path}\n\nChạy cài đặt ngay?"):
-                run_installer(installer_path)
+            if messagebox.askyesno("Tải xong", f"Đã tải update:\n{installer_path}\n\nChạy cài đặt ngay? App sẽ đóng để cập nhật."):
+                run_installer(installer_path, wait_for_pid=os.getpid())
+                self.after(100, self.destroy)
 
         def on_error(exc: Exception) -> None:
             popup.grab_release()

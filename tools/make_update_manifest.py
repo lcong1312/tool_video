@@ -16,10 +16,18 @@ def sha256_file(path: Path) -> str:
 
 
 def read_source_version() -> str:
-    gui_path = Path("capcut_video_gui.py")
-    if not gui_path.is_file():
+    version_path = Path("app_version.py")
+    if not version_path.is_file():
         return ""
-    match = re.search(r'^APP_VERSION\s*=\s*"([^"]+)"', gui_path.read_text(encoding="utf-8"), re.MULTILINE)
+    match = re.search(r'^APP_VERSION\s*=\s*"([^"]+)"', version_path.read_text(encoding="utf-8"), re.MULTILINE)
+    return match.group(1) if match else ""
+
+
+def read_dist_version() -> str:
+    version_path = Path("dist/CapCutVideoTool/app_version.py")
+    if not version_path.is_file():
+        return ""
+    match = re.search(r'^APP_VERSION\s*=\s*"([^"]+)"', version_path.read_text(encoding="utf-8"), re.MULTILINE)
     return match.group(1) if match else ""
 
 
@@ -35,8 +43,14 @@ def main() -> int:
     source_version = read_source_version()
     if not args.skip_version_check and source_version and source_version != args.version:
         raise SystemExit(
-            f"Version mismatch: capcut_video_gui.py has {source_version}, "
+            f"Version mismatch: app_version.py has {source_version}, "
             f"but manifest version is {args.version}. Run tools\\set_app_version.py {args.version} first."
+        )
+    dist_version = read_dist_version()
+    if not args.skip_version_check and dist_version != args.version:
+        raise SystemExit(
+            f"Build mismatch: dist/CapCutVideoTool/app_version.py has {dist_version or 'missing'}, "
+            f"but manifest version is {args.version}. Run build_setup.bat again before making manifest."
         )
 
     installer = Path(args.installer).resolve()

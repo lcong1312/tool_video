@@ -1,5 +1,5 @@
 #define MyAppName "CapCut Video Tool"
-#define MyAppVersion "1.0.3"
+#define MyAppVersion "1.0.4"
 #define MyAppPublisher "CapCut Video Tool"
 #define MyAppExeName "CapCutVideoTool.exe"
 

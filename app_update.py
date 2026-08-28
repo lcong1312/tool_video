@@ -120,10 +120,46 @@ def download_installer(
     return target
 
 
-def run_installer(path: Path, *, delete_after_exit: bool = True) -> None:
+def run_installer(path: Path, *, delete_after_exit: bool = True, wait_for_pid: int | None = None) -> None:
+    if wait_for_pid:
+        schedule_installer_after_process_exit(path, wait_for_pid, delete_after_exit=delete_after_exit)
+        return
     process = subprocess.Popen([str(path)], close_fds=True)
     if delete_after_exit:
         schedule_delete_after_process(path, process.pid)
+
+
+def schedule_installer_after_process_exit(path: Path, pid: int, *, delete_after_exit: bool = True) -> None:
+    escaped_path = str(path).replace("'", "''")
+    cleanup = (
+        "if ($installer) { Wait-Process -Id $installer.Id -ErrorAction SilentlyContinue }; "
+        "Start-Sleep -Seconds 8; "
+        f"Remove-Item -LiteralPath '{escaped_path}' -Force -ErrorAction SilentlyContinue"
+        if delete_after_exit
+        else ""
+    )
+    command = (
+        f"$app=Get-Process -Id {pid} -ErrorAction SilentlyContinue; "
+        "if ($app) { Wait-Process -Id $app.Id -ErrorAction SilentlyContinue }; "
+        "Start-Sleep -Seconds 1; "
+        f"$installer=Start-Process -FilePath '{escaped_path}' -PassThru; "
+        f"{cleanup}"
+    )
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    subprocess.Popen(
+        [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            command,
+        ],
+        close_fds=True,
+        creationflags=creationflags,
+    )
 
 
 def schedule_delete_after_process(path: Path, pid: int) -> None:

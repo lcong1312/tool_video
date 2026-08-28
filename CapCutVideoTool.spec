@@ -29,6 +29,7 @@ a = Analysis(
         ('pexels_downloader.py', '.'),
         ('voicevox_tts.py', '.'),
         ('app_update.py', '.'),
+        ('app_version.py', '.'),
         ('fish_mexico_gui.py', '.'),
         ('run_setting_fish.bat', '.'),
         ('config.json', '.'),
