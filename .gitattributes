@@ -1,3 +1,4 @@
 bin/** filter=lfs diff=lfs merge=lfs -text
 vendor/VOICEVOX/** filter=lfs diff=lfs merge=lfs -text
 vendor/auto_capcut_pro/** filter=lfs diff=lfs merge=lfs -text
+updates/CapCutVideoToolSetup.exe filter=lfs diff=lfs merge=lfs -text

@@ -28,6 +28,7 @@ a = Analysis(
         ('capcut_draft.py', '.'),
         ('pexels_downloader.py', '.'),
         ('voicevox_tts.py', '.'),
+        ('app_update.py', '.'),
         ('fish_mexico_gui.py', '.'),
         ('run_setting_fish.bat', '.'),
         ('config.json', '.'),

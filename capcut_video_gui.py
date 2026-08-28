@@ -41,6 +41,7 @@ from capcut_draft import (
 from pexels_downloader import PEXELS_MAX_DOWNLOAD_WORKERS, download_pexels_videos, pexels_api_keys_from_env
 from voicevox_tts import VoicevoxSettings, synthesize_text_file
 from dotenv import load_dotenv
+from app_update import DEFAULT_MANIFEST_URL, fetch_update_info, is_newer_version, open_download
 from fish_mexico_gui import (
     build_pause_units,
     build_s2_requests,
@@ -52,6 +53,7 @@ from fish_mexico_gui import (
 )
 
 
+APP_VERSION = "1.0.0"
 APP_DIR = Path(__file__).resolve().parent
 APP_CONFIG = APP_DIR / "config.json"
 ENV_FILE = APP_DIR / ".env"
@@ -109,7 +111,7 @@ def find_capcut() -> Path | None:
 class CapCutVideoApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
-        self.title("Tool Video CapCut")
+        self.title(f"Tool Video CapCut v{APP_VERSION}")
         self.geometry("860x760")
         self.minsize(820, 720)
         self.config_data = load_app_config()
@@ -182,12 +184,20 @@ class CapCutVideoApp(tk.Tk):
         self.new_fish_api_key_var = tk.StringVar()
         self.new_pexels_api_key_var = tk.StringVar()
         self.settings_status_var = tk.StringVar(value="")
+        self.update_manifest_url_var = tk.StringVar(
+            value=str(
+                self.config_data.get("update_manifest_url")
+                or os.environ.get("CAPCUT_VIDEO_TOOL_UPDATE_URL", "")
+                or DEFAULT_MANIFEST_URL
+            )
+        )
         capcut = find_capcut()
         self.capcut_var = tk.StringVar(value=str(capcut) if capcut else "")
 
         self.worker: threading.Thread | None = None
         self._build_ui()
         self.reload_fish_voice_settings()
+        self.after(1500, self.check_for_updates_silent)
 
     def _build_ui(self) -> None:
         self.tabs = ttk.Notebook(self)
@@ -540,12 +550,70 @@ class CapCutVideoApp(tk.Tk):
         controls.grid(row=3, column=0, sticky="ew", pady=(4, 0))
         ttk.Label(controls, textvariable=self.settings_status_var).pack(side="left")
 
+        update_box = ttk.LabelFrame(parent, text="Update")
+        update_box.grid(row=4, column=0, sticky="ew", pady=(12, 0))
+        update_box.columnconfigure(1, weight=1)
+        ttk.Label(update_box, text="Manifest URL").grid(row=0, column=0, sticky="w", padx=10, pady=(8, 10))
+        ttk.Entry(update_box, textvariable=self.update_manifest_url_var).grid(
+            row=0, column=1, sticky="ew", padx=(0, 8), pady=(8, 10)
+        )
+        ttk.Button(update_box, text="Lưu", command=self.save_update_config).grid(
+            row=0, column=2, sticky="ew", padx=(0, 8), pady=(8, 10)
+        )
+        ttk.Button(update_box, text="Kiểm tra", command=self.check_for_updates_manual).grid(
+            row=0, column=3, sticky="ew", padx=(0, 10), pady=(8, 10)
+        )
+
     def refresh_api_key_counts(self) -> None:
         load_dotenv(ENV_FILE, override=True)
         fish_count = len(fish_api_keys_from_env())
         pexels_count = len(pexels_api_keys_from_env())
         self.fish_key_count_var.set(f"Tổng key hiện tại: {fish_count}")
         self.pexels_key_count_var.set(f"Tổng key hiện tại: {pexels_count}")
+
+    def save_update_config(self) -> None:
+        self.config_data["update_manifest_url"] = self.update_manifest_url_var.get().strip()
+        save_app_config(self.config_data)
+        self.settings_status_var.set("Đã lưu cấu hình update")
+
+    def check_for_updates_silent(self) -> None:
+        self._check_for_updates(show_latest=False)
+
+    def check_for_updates_manual(self) -> None:
+        self.save_update_config()
+        self._check_for_updates(show_latest=True)
+
+    def _check_for_updates(self, *, show_latest: bool) -> None:
+        manifest_url = self.update_manifest_url_var.get().strip()
+        if not manifest_url:
+            manifest_url = DEFAULT_MANIFEST_URL
+
+        def worker() -> None:
+            try:
+                update = fetch_update_info(manifest_url)
+                if not update:
+                    if show_latest:
+                        self.ui(messagebox.showinfo, "Update", "Chưa cấu hình Manifest URL.")
+                    return
+                if is_newer_version(APP_VERSION, update.version):
+                    self.ui(self.prompt_update, update)
+                elif show_latest:
+                    self.ui(messagebox.showinfo, "Update", f"Bạn đang dùng bản mới nhất: {APP_VERSION}")
+            except Exception as exc:
+                if show_latest:
+                    self.ui(messagebox.showerror, "Update", f"Không kiểm tra được update:\n{exc}")
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def prompt_update(self, update) -> None:
+        notes = f"\n\nGhi chú:\n{update.notes}" if update.notes else ""
+        message = (
+            f"Có bản mới {update.version}.\n"
+            f"Bản hiện tại: {APP_VERSION}\n\n"
+            f"Bấm Yes để mở link tải installer.{notes}"
+        )
+        if messagebox.askyesno("Có bản cập nhật", message):
+            open_download(update)
 
     def _append_env_list_value(self, variable_name: str, value: str) -> None:
         text = ENV_FILE.read_text(encoding="utf-8-sig") if ENV_FILE.is_file() else ""
