@@ -3,12 +3,11 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import sys
-import tempfile
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 
 MANIFEST_ENV_VAR = "CAPCUT_VIDEO_TOOL_UPDATE_URL"
@@ -82,28 +81,53 @@ def is_newer_version(current_version: str, latest_version: str) -> bool:
     return compare_versions(latest_version, current_version) > 0
 
 
-def open_download(update: UpdateInfo) -> None:
-    if sys.platform.startswith("win"):
-        os.startfile(update.download_url)  # type: ignore[attr-defined]
-        return
-    subprocess.Popen([_open_command(), update.download_url], close_fds=True)
-
-
-def download_installer(update: UpdateInfo, timeout: float = 30.0) -> Path:
-    target_dir = Path(tempfile.gettempdir()) / "CapCutVideoToolUpdates"
+def download_installer(
+    update: UpdateInfo,
+    target_dir: Path,
+    *,
+    timeout: float = 30.0,
+    progress: Callable[[int, int], None] | None = None,
+) -> Path:
     target_dir.mkdir(parents=True, exist_ok=True)
     target = target_dir / Path(update.file_name).name
+    partial = target.with_suffix(target.suffix + ".download")
     request = urllib.request.Request(
         update.download_url,
         headers={"User-Agent": "CapCutVideoTool-Updater"},
     )
     with urllib.request.urlopen(request, timeout=timeout) as response:
-        target.write_bytes(response.read())
+        total = int(response.headers.get("Content-Length") or 0)
+        downloaded = 0
+        with partial.open("wb") as handle:
+            while True:
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                handle.write(chunk)
+                downloaded += len(chunk)
+                if progress:
+                    progress(downloaded, total)
+    partial.replace(target)
+    if update.sha256:
+        actual_sha256 = sha256_file(target)
+        if actual_sha256.lower() != update.sha256.lower():
+            target.unlink(missing_ok=True)
+            raise ValueError("File update tải về không khớp SHA256.")
     return target
 
 
 def run_installer(path: Path) -> None:
     subprocess.Popen([str(path)], close_fds=True)
+
+
+def sha256_file(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _version_parts(value: str) -> list[int]:
@@ -112,9 +136,3 @@ def _version_parts(value: str) -> list[int]:
         digits = "".join(char for char in chunk if char.isdigit())
         parts.append(int(digits) if digits else 0)
     return parts or [0]
-
-
-def _open_command() -> str:
-    if sys.platform == "darwin":
-        return "open"
-    return "xdg-open"

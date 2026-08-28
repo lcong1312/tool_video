@@ -6,8 +6,8 @@ Project này có thể dùng Cloudflare Tunnel làm server update tĩnh.
 
 1. App đang cài trên máy khách đọc `latest.json`.
 2. Nếu `version` trong manifest lớn hơn `APP_VERSION` trong app, GUI sẽ hiện thông báo.
-3. Khi người dùng bấm `Yes`, app mở link tải `CapCutVideoToolSetup.exe`.
-4. Người dùng chạy installer mới để cập nhật.
+3. Khi người dùng bấm `Yes`, app tải `CapCutVideoToolSetup.exe` vào thư mục đang cài app.
+4. Tải xong, app hỏi chạy installer mới để cập nhật.
 
 ## Thiết lập máy server
 

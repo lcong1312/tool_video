@@ -41,7 +41,7 @@ from capcut_draft import (
 from pexels_downloader import PEXELS_MAX_DOWNLOAD_WORKERS, download_pexels_videos, pexels_api_keys_from_env
 from voicevox_tts import VoicevoxSettings, synthesize_text_file
 from dotenv import load_dotenv
-from app_update import DEFAULT_MANIFEST_URL, fetch_update_info, is_newer_version, open_download
+from app_update import DEFAULT_MANIFEST_URL, download_installer, fetch_update_info, is_newer_version, run_installer
 from fish_mexico_gui import (
     build_pause_units,
     build_s2_requests,
@@ -610,10 +610,58 @@ class CapCutVideoApp(tk.Tk):
         message = (
             f"Có bản mới {update.version}.\n"
             f"Bản hiện tại: {APP_VERSION}\n\n"
-            f"Bấm Yes để mở link tải installer.{notes}"
+            f"Bấm Yes để tải installer vào thư mục app và cập nhật.{notes}"
         )
         if messagebox.askyesno("Có bản cập nhật", message):
-            open_download(update)
+            self.download_update(update)
+
+    def download_update(self, update) -> None:
+        popup = tk.Toplevel(self)
+        popup.title("Đang tải cập nhật")
+        popup.resizable(False, False)
+        popup.transient(self)
+        popup.grab_set()
+
+        status_var = tk.StringVar(value=f"Đang tải bản {update.version}...")
+        percent_var = tk.StringVar(value="0%")
+        ttk.Label(popup, textvariable=status_var, width=56).grid(row=0, column=0, columnspan=2, sticky="w", padx=14, pady=(14, 8))
+        progress_bar = ttk.Progressbar(popup, mode="determinate", length=420)
+        progress_bar.grid(row=1, column=0, sticky="ew", padx=(14, 8), pady=(0, 12))
+        ttk.Label(popup, textvariable=percent_var, width=8, anchor="e").grid(row=1, column=1, sticky="e", padx=(0, 14), pady=(0, 12))
+        popup.columnconfigure(0, weight=1)
+
+        def set_progress(downloaded: int, total: int) -> None:
+            def update_ui() -> None:
+                if total > 0:
+                    progress_bar.configure(maximum=total, value=downloaded)
+                    percent_var.set(f"{round(downloaded / total * 100)}%")
+                    status_var.set(f"Đang tải {downloaded / (1024 * 1024):.1f}/{total / (1024 * 1024):.1f} MB")
+                else:
+                    progress_bar.configure(mode="indeterminate")
+                    progress_bar.start(10)
+                    status_var.set(f"Đang tải {downloaded / (1024 * 1024):.1f} MB")
+
+            self.ui(update_ui)
+
+        def worker() -> None:
+            try:
+                installer_path = download_installer(update, APP_DIR, timeout=120.0, progress=set_progress)
+                self.ui(on_done, installer_path)
+            except Exception as exc:
+                self.ui(on_error, exc)
+
+        def on_done(installer_path: Path) -> None:
+            popup.grab_release()
+            popup.destroy()
+            if messagebox.askyesno("Tải xong", f"Đã tải update:\n{installer_path}\n\nChạy cài đặt ngay?"):
+                run_installer(installer_path)
+
+        def on_error(exc: Exception) -> None:
+            popup.grab_release()
+            popup.destroy()
+            messagebox.showerror("Update", f"Không tải được bản cập nhật:\n{exc}")
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _append_env_list_value(self, variable_name: str, value: str) -> None:
         text = ENV_FILE.read_text(encoding="utf-8-sig") if ENV_FILE.is_file() else ""
