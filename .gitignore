@@ -50,6 +50,13 @@ installer_output/
 
 # Local dependency cache not needed in Git.
 tools/
+!tools/
+!tools/make_update_manifest.py
+!tools/serve_updates.bat
+!tools/start_update_server_hidden.bat
+!tools/stop_update_server.bat
+tools/*.zip
+updates/*.pid
 
 # Runtime bundles committed through Git LFS.
 !bin/
