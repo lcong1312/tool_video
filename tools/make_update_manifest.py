@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 from pathlib import Path
 
 
@@ -14,13 +15,29 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def read_source_version() -> str:
+    gui_path = Path("capcut_video_gui.py")
+    if not gui_path.is_file():
+        return ""
+    match = re.search(r'^APP_VERSION\s*=\s*"([^"]+)"', gui_path.read_text(encoding="utf-8"), re.MULTILINE)
+    return match.group(1) if match else ""
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Create latest.json for CapCut Video Tool updates.")
     parser.add_argument("--version", required=True)
     parser.add_argument("--installer", default="installer_output/CapCutVideoToolSetup.exe")
     parser.add_argument("--out-dir", default="updates")
     parser.add_argument("--notes", default="")
+    parser.add_argument("--skip-version-check", action="store_true")
     args = parser.parse_args()
+
+    source_version = read_source_version()
+    if not args.skip_version_check and source_version and source_version != args.version:
+        raise SystemExit(
+            f"Version mismatch: capcut_video_gui.py has {source_version}, "
+            f"but manifest version is {args.version}. Run tools\\set_app_version.py {args.version} first."
+        )
 
     installer = Path(args.installer).resolve()
     if not installer.is_file():

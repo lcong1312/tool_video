@@ -71,8 +71,7 @@ CAPCUT_VIDEO_TOOL_UPDATE_URL=https://update.nexflow.click/latest.json
 
 ## Mỗi lần ra bản mới
 
-1. Sửa `APP_VERSION` trong `capcut_video_gui.py`.
-2. Sửa `MyAppVersion` trong `installer\CapCutVideoToolSetup.iss`.
-3. Chạy `build_setup.bat`.
-4. Chạy `python .\tools\make_update_manifest.py --version X.Y.Z --notes "Nội dung thay đổi"`.
-5. Đảm bảo Cloudflare Tunnel/server update vẫn đang chạy.
+1. Chạy `python .\tools\set_app_version.py X.Y.Z`.
+2. Chạy `build_setup.bat`.
+3. Chạy `python .\tools\make_update_manifest.py --version X.Y.Z --notes "Nội dung thay đổi"`.
+4. Đảm bảo Cloudflare Tunnel/server update vẫn đang chạy.

@@ -55,6 +55,7 @@ tools/
 !tools/serve_updates.bat
 !tools/start_update_server_hidden.bat
 !tools/stop_update_server.bat
+!tools/set_app_version.py
 tools/*.zip
 updates/*.pid
 

@@ -53,7 +53,7 @@ from fish_mexico_gui import (
 )
 
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.3"
 APP_DIR = Path(__file__).resolve().parent
 APP_CONFIG = APP_DIR / "config.json"
 ENV_FILE = APP_DIR / ".env"

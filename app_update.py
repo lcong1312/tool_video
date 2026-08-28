@@ -95,19 +95,23 @@ def download_installer(
         update.download_url,
         headers={"User-Agent": "CapCutVideoTool-Updater"},
     )
-    with urllib.request.urlopen(request, timeout=timeout) as response:
-        total = int(response.headers.get("Content-Length") or 0)
-        downloaded = 0
-        with partial.open("wb") as handle:
-            while True:
-                chunk = response.read(1024 * 1024)
-                if not chunk:
-                    break
-                handle.write(chunk)
-                downloaded += len(chunk)
-                if progress:
-                    progress(downloaded, total)
-    partial.replace(target)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            total = int(response.headers.get("Content-Length") or 0)
+            downloaded = 0
+            with partial.open("wb") as handle:
+                while True:
+                    chunk = response.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    handle.write(chunk)
+                    downloaded += len(chunk)
+                    if progress:
+                        progress(downloaded, total)
+        partial.replace(target)
+    except Exception:
+        partial.unlink(missing_ok=True)
+        raise
     if update.sha256:
         actual_sha256 = sha256_file(target)
         if actual_sha256.lower() != update.sha256.lower():
@@ -116,8 +120,35 @@ def download_installer(
     return target
 
 
-def run_installer(path: Path) -> None:
-    subprocess.Popen([str(path)], close_fds=True)
+def run_installer(path: Path, *, delete_after_exit: bool = True) -> None:
+    process = subprocess.Popen([str(path)], close_fds=True)
+    if delete_after_exit:
+        schedule_delete_after_process(path, process.pid)
+
+
+def schedule_delete_after_process(path: Path, pid: int) -> None:
+    escaped_path = str(path).replace("'", "''")
+    command = (
+        f"$p=Get-Process -Id {pid} -ErrorAction SilentlyContinue; "
+        "if ($p) { Wait-Process -Id $p.Id -ErrorAction SilentlyContinue }; "
+        "Start-Sleep -Seconds 8; "
+        f"Remove-Item -LiteralPath '{escaped_path}' -Force -ErrorAction SilentlyContinue"
+    )
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    subprocess.Popen(
+        [
+            "powershell",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-WindowStyle",
+            "Hidden",
+            "-Command",
+            command,
+        ],
+        close_fds=True,
+        creationflags=creationflags,
+    )
 
 
 def sha256_file(path: Path) -> str:
