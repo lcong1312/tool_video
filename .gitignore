@@ -59,6 +59,7 @@ tools/
 !tools/set_app_version.py
 !tools/check_build_version.py
 !tools/release_update.bat
+!tools/update_release.bat
 tools/*.zip
 updates/*.pid
 
