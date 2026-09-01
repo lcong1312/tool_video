@@ -1,4 +1,5 @@
 from __future__ import annotations
+# -*- coding: utf-8 -*-
 
 import json
 import os
@@ -19,6 +20,8 @@ CAPMATE_ROOT = ACP_ROOT / "capcut-mate"
 TEMPLATE_DIR = CAPMATE_ROOT / "template" / "default2"
 CAPCUT_DRAFT_ROOT = Path.home() / "AppData/Local/CapCut/User Data/Projects/com.lveditor.draft"
 BUILD_ROOT = CAPCUT_DRAFT_ROOT / ".building_projects"
+BUNDLED_TEMPLATE_ROOT = APP_DIR / "capcut_template"
+BUNDLED_TEMPLATE_DIR = BUNDLED_TEMPLATE_ROOT / "mau"
 APP_BIN = Path(__file__).resolve().parent / "bin"
 SUBPROCESS_CREATIONFLAGS = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 
@@ -29,6 +32,7 @@ if CAPMATE_ROOT.is_dir():
 
 
 REAL_TEMPLATE_NAME = "mau"
+SUBTITLE_BOTTOM_Y = -0.7655563354492188
 
 
 def capcut_path(path: Path) -> str:
@@ -112,9 +116,39 @@ def copy_template(project_folder: Path) -> None:
     shutil.copytree(source, project_folder, ignore=shutil.ignore_patterns("draft_content.json.bak"))
 
 
-def find_capcut_template() -> Path:
-    candidates = []
+def is_valid_template(folder: Path) -> bool:
+    return (folder / "draft_content.json").is_file() and (folder / "draft_meta_info.json").is_file()
+
+
+def bundled_template() -> Path | None:
+    if is_valid_template(BUNDLED_TEMPLATE_DIR):
+        return BUNDLED_TEMPLATE_DIR
+    if not BUNDLED_TEMPLATE_ROOT.is_dir():
+        return None
+    candidates = [
+        folder
+        for folder in BUNDLED_TEMPLATE_ROOT.iterdir()
+        if folder.is_dir() and is_valid_template(folder)
+    ]
+    if candidates:
+        return max(candidates, key=lambda item: item.stat().st_mtime)
+    return None
+
+
+def iter_machine_templates():
+    if not CAPCUT_DRAFT_ROOT.is_dir():
+        return
     for folder in CAPCUT_DRAFT_ROOT.iterdir():
+        yield folder
+
+
+def find_capcut_template() -> Path:
+    bundled = bundled_template()
+    if bundled is not None:
+        return bundled
+
+    candidates = []
+    for folder in iter_machine_templates():
         if not folder.is_dir() or folder.name.startswith(".") or folder.name.startswith("Auto") or folder.name.startswith("ACP"):
             continue
         lowered = folder.name.lower()
@@ -122,7 +156,7 @@ def find_capcut_template() -> Path:
             continue
         if (folder / "Resources" / "auto_clips").exists():
             continue
-        if (folder / "draft_content.json").is_file() and (folder / "draft_meta_info.json").is_file():
+        if is_valid_template(folder):
             try:
                 content = load_json(folder / "draft_content.json")
                 segment_count = sum(len(track.get("segments") or []) for track in content.get("tracks", []))
@@ -141,8 +175,8 @@ def find_capcut_template() -> Path:
     if TEMPLATE_DIR.is_dir():
         return TEMPLATE_DIR
     raise RuntimeError(
-        "Khong tim thay project CapCut mau tren may nay. "
-        "Hay mo CapCut, bam Tao du an moi mot lan, dong tab edit neu can, roi chay lai tool."
+        "Không tìm thấy project CapCut mẫu trên máy này. "
+        "Hãy mở CapCut, bấm Tạo dự án mới một lần, đóng tab edit nếu cần, rồi chạy lại tool."
     )
 
 
@@ -210,8 +244,11 @@ def backup_project_folder(project_folder: Path) -> Path:
 
 
 def find_real_template() -> Path:
+    bundled = bundled_template()
+    if bundled is not None:
+        return bundled
     preferred = CAPCUT_DRAFT_ROOT / REAL_TEMPLATE_NAME
-    if (preferred / "draft_content.json").is_file():
+    if is_valid_template(preferred):
         return preferred
     return find_capcut_template()
 
@@ -863,7 +900,7 @@ def _normalize_segment_extra_refs(content: dict, template: dict) -> None:
 
 def find_segment_schema_template() -> Path:
     candidates = []
-    for folder in CAPCUT_DRAFT_ROOT.iterdir():
+    for folder in iter_machine_templates():
         if not folder.is_dir() or folder.name.startswith("."):
             continue
         lowered = folder.name.lower()
@@ -892,7 +929,7 @@ def find_segment_schema_template() -> Path:
 
 def find_text_schema_template() -> Path | None:
     candidates = []
-    for folder in CAPCUT_DRAFT_ROOT.iterdir():
+    for folder in iter_machine_templates():
         if not folder.is_dir() or folder.name.startswith("."):
             continue
         if (folder / "Resources" / "auto_clips").exists():
@@ -977,28 +1014,134 @@ def _unlock_segment(segment: dict) -> None:
             segment[key] = False
 
 
+def _place_text_segment_bottom(segment: dict) -> None:
+    clip = segment.setdefault("clip", {})
+    if not isinstance(clip, dict):
+        clip = {}
+        segment["clip"] = clip
+    scale = clip.setdefault("scale", {})
+    if isinstance(scale, dict):
+        scale.setdefault("x", 1.0)
+        scale.setdefault("y", 1.0)
+    clip.setdefault("rotation", 0.0)
+    transform = clip.setdefault("transform", {})
+    if isinstance(transform, dict):
+        transform["x"] = 0.0
+        transform["y"] = SUBTITLE_BOTTOM_Y
+    flip = clip.setdefault("flip", {})
+    if isinstance(flip, dict):
+        flip.setdefault("vertical", False)
+        flip.setdefault("horizontal", False)
+    clip.setdefault("alpha", 1.0)
+
+
+def _fallback_text_track() -> dict:
+    return {
+        "id": new_id(),
+        "type": "text",
+        "segments": [],
+        "flag": 0,
+        "attribute": 0,
+        "name": "",
+        "is_default_name": True,
+    }
+
+
+def _fallback_text_segment() -> dict:
+    return {
+        "id": new_id(),
+        "material_id": "",
+        "source_timerange": None,
+        "target_timerange": {"start": 0, "duration": 1_000_000},
+        "render_timerange": {"start": 0, "duration": 0},
+        "extra_material_refs": [],
+        "render_index": 14000,
+        "track_render_index": 2,
+        "visible": True,
+        "track_attribute": 0,
+        "clip": {
+            "scale": {"x": 1.0, "y": 1.0},
+            "rotation": 0.0,
+            "transform": {"x": 0.0, "y": SUBTITLE_BOTTOM_Y},
+            "flip": {"vertical": False, "horizontal": False},
+            "alpha": 1.0,
+        },
+        "common_keyframes": [],
+        "keyframe_refs": [],
+    }
+
+
+def _fallback_text_material() -> dict:
+    return {
+        "id": "",
+        "type": "subtitle",
+        "content": json.dumps(
+            {
+                "text": "",
+                "styles": [
+                    {
+                        "range": [0, 0],
+                        "size": 6.0,
+                        "bold": False,
+                        "italic": False,
+                        "underline": False,
+                        "align": 1,
+                        "font": {"path": "", "id": ""},
+                        "fill": {
+                            "alpha": 1.0,
+                            "content": {"solid": {"color": [1.0, 1.0, 1.0]}},
+                        },
+                    }
+                ],
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        ),
+        "recognize_text": "",
+        "base_content": "",
+        "group_id": "",
+        "words": {"start_time": [], "end_time": [], "text": []},
+        "current_words": {"start_time": [], "end_time": [], "text": []},
+    }
+
+
+def _fallback_text_animation() -> dict:
+    return {
+        "id": "",
+        "type": "sticker_animation",
+        "animations": [],
+    }
+
+
 def add_srt_to_content(content: dict, srt_path: Path) -> None:
     cues = parse_srt_cues(srt_path)
     if not cues:
         return
     schema_folder = find_text_schema_template()
-    if not schema_folder:
-        raise RuntimeError("Khong tim thay project CapCut mau co subtitle/text track de import SRT.")
-    schema_content = load_json(schema_folder / "draft_content.json")
-    schema_track = next(
-        track
-        for track in schema_content.get("tracks", [])
-        if track.get("type") == "text" and track.get("segments")
-    )
-    schema_segment = schema_track["segments"][0]
-    schema_text = schema_content.get("materials", {}).get("texts", [None])[0]
-    schema_animation = schema_content.get("materials", {}).get("material_animations", [None])[0]
-    if not schema_text or not schema_animation:
-        raise RuntimeError("Project mau khong du text material de import SRT.")
-
     materials = content.setdefault("materials", {})
-    for key, value in schema_content.get("materials", {}).items():
-        materials.setdefault(key, [] if isinstance(value, list) else _json_clone(value))
+
+    if schema_folder:
+        schema_content = load_json(schema_folder / "draft_content.json")
+        schema_track = next(
+            track
+            for track in schema_content.get("tracks", [])
+            if track.get("type") == "text" and track.get("segments")
+        )
+        schema_segment = schema_track["segments"][0]
+        schema_text = schema_content.get("materials", {}).get("texts", [None])[0]
+        schema_animation = schema_content.get("materials", {}).get("material_animations", [None])[0]
+        if not schema_text:
+            schema_text = _fallback_text_material()
+        if not schema_animation:
+            schema_animation = _fallback_text_animation()
+        for key, value in schema_content.get("materials", {}).items():
+            materials.setdefault(key, [] if isinstance(value, list) else _json_clone(value))
+    else:
+        schema_track = _fallback_text_track()
+        schema_segment = _fallback_text_segment()
+        schema_text = _fallback_text_material()
+        schema_animation = _fallback_text_animation()
+
     materials.setdefault("texts", [])
     materials.setdefault("material_animations", [])
 
@@ -1041,6 +1184,7 @@ def add_srt_to_content(content: dict, srt_path: Path) -> None:
             }
         )
         _unlock_segment(segment)
+        _place_text_segment_bottom(segment)
         text_track["segments"].append(segment)
 
     content.setdefault("tracks", []).append(text_track)
@@ -1073,11 +1217,11 @@ def build_content_from_real_schema(
     schema_content = load_json(find_segment_schema_template() / "draft_content.json")
     schema_track = _first_video_track(schema_content)
     if not schema_track or not schema_track.get("segments"):
-        raise RuntimeError("Khong tim thay video segment mau trong project CapCut that.")
+        raise RuntimeError("Không tìm thấy video segment mẫu trong project CapCut thật.")
     schema_segment = schema_track["segments"][0]
     schema_video = schema_content.get("materials", {}).get("videos", [None])[0]
     if not schema_video:
-        raise RuntimeError("Khong tim thay video material mau trong project CapCut that.")
+        raise RuntimeError("Không tìm thấy video material mẫu trong project CapCut thật.")
 
     content = _json_clone(base_content)
     timeline_id = content.get("id") or new_id()

@@ -1,4 +1,5 @@
 from __future__ import annotations
+# -*- coding: utf-8 -*-
 
 import json
 import copy
@@ -15,6 +16,8 @@ from make_capcut_video import ffprobe_duration, ffprobe_video_size, run
 
 APP_DIR = Path(__file__).resolve().parent
 CAPCUT_DRAFT_ROOT = Path.home() / "AppData/Local/CapCut/User Data/Projects/com.lveditor.draft"
+BUNDLED_TEMPLATE_ROOT = APP_DIR / "capcut_template"
+BUNDLED_TEMPLATE_DIR = BUNDLED_TEMPLATE_ROOT / "mau"
 LOCAL_ACP_PYTHON = APP_DIR / "vendor" / "auto_capcut_pro" / "python" / "python.exe"
 LOCAL_ACP_PYTHONW = APP_DIR / "vendor" / "auto_capcut_pro" / "python" / "pythonw.exe"
 ACP_PYTHON = Path(r"C:\Program Files\Auto Capcut Pro\python\python.exe")
@@ -87,11 +90,36 @@ def _unique_project_folder(name: str) -> Path:
         candidate = CAPCUT_DRAFT_ROOT / f"{base} ({index})"
         if not candidate.exists():
             return candidate
-    raise RuntimeError("Khong tao duoc ten project CapCut moi.")
+    raise RuntimeError("Không tạo được tên project CapCut mới.")
+
+
+def _is_valid_template(folder: Path) -> bool:
+    return (folder / "draft_content.json").is_file() and (folder / "draft_meta_info.json").is_file()
+
+
+def _bundled_template() -> Path | None:
+    if _is_valid_template(BUNDLED_TEMPLATE_DIR):
+        return BUNDLED_TEMPLATE_DIR
+    if not BUNDLED_TEMPLATE_ROOT.is_dir():
+        return None
+    candidates = [
+        folder
+        for folder in BUNDLED_TEMPLATE_ROOT.iterdir()
+        if folder.is_dir() and _is_valid_template(folder)
+    ]
+    if candidates:
+        return max(candidates, key=lambda item: item.stat().st_mtime)
+    return None
 
 
 def _find_template() -> Path:
+    bundled = _bundled_template()
+    if bundled is not None:
+        return bundled
+
     candidates = []
+    if not CAPCUT_DRAFT_ROOT.is_dir():
+        raise RuntimeError("Không tìm thấy draft CapCut mẫu đóng kèm tool hoặc trên máy này.")
     for folder in CAPCUT_DRAFT_ROOT.iterdir():
         if not folder.is_dir() or folder.name.startswith(".") or folder.name.startswith("Auto "):
             continue
@@ -116,7 +144,7 @@ def _find_template() -> Path:
                     clean_bonus += 1
             candidates.append((1 if duration == 0 and segment_count == 0 else 0, clean_bonus, folder.stat().st_mtime, folder))
     if not candidates:
-        raise RuntimeError("Khong tim thay draft CapCut mau de tao project moi.")
+        raise RuntimeError("Không tìm thấy draft CapCut mẫu để tạo project mới.")
     return max(candidates, key=lambda item: (item[0], item[1], item[2]))[3]
 
 
@@ -137,7 +165,7 @@ def find_latest_capcut_project() -> Path:
                 continue
             candidates.append(folder)
     if not candidates:
-        raise RuntimeError("Chua tim thay project CapCut trong. Hay mo CapCut, bam Tao du an moi, dong tab edit neu can, roi chay lai.")
+        raise RuntimeError("Chưa tìm thấy project CapCut trống. Hãy mở CapCut, bấm Tạo dự án mới, đóng tab edit nếu cần, rồi chạy lại.")
     return max(candidates, key=lambda item: item.stat().st_mtime)
 
 
@@ -655,7 +683,7 @@ def _write_modern_support_files(project_folder: Path, content: dict, clips: list
 
 def create_capcut_project(video: Path, duration_seconds: float, project_name: str | None = None) -> Path:
     if not video.is_file():
-        raise RuntimeError(f"Khong tim thay video de dua vao CapCut: {video}")
+        raise RuntimeError(f"Không tìm thấy video để đưa vào CapCut: {video}")
 
     template = _find_template()
     name = project_name or f"Auto {time.strftime('%Y%m%d %H%M%S')}"
@@ -691,10 +719,10 @@ def create_capcut_project_from_clips(
     backup_project: bool = False,
 ) -> Path:
     if not clips:
-        raise RuntimeError("Khong co clip nao de dua vao CapCut.")
+        raise RuntimeError("Không có clip nào để đưa vào CapCut.")
     for clip in clips:
         if not clip.is_file():
-            raise RuntimeError(f"Khong tim thay clip: {clip}")
+            raise RuntimeError(f"Không tìm thấy clip: {clip}")
 
     if ACP_HELPER.is_file():
         with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as handle:
@@ -770,7 +798,7 @@ def create_capcut_project_from_clips(
 
 def prepare_capcut_project(project_name: str, resume: bool = False) -> Path:
     if not ACP_HELPER.is_file():
-        raise RuntimeError(f"Khong tim thay file builder: {ACP_HELPER}")
+        raise RuntimeError(f"Không tìm thấy file builder: {ACP_HELPER}")
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", suffix=".json", delete=False) as handle:
         request_path = Path(handle.name)
         json.dump(

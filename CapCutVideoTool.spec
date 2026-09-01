@@ -77,6 +77,7 @@ coll = COLLECT(
     exe,
     a.binaries,
     a.datas,
+    Tree('capcut_template', prefix='capcut_template'),
     Tree('vendor/VOICEVOX', prefix='vendor/VOICEVOX'),
     Tree('vendor/auto_capcut_pro', prefix='vendor/auto_capcut_pro'),
     strip=False,

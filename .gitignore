@@ -64,6 +64,8 @@ tools/*.zip
 updates/*.pid
 
 # Runtime bundles committed through Git LFS.
+!capcut_template/
+!capcut_template/**
 !bin/
 !bin/**
 !vendor/

@@ -1,4 +1,5 @@
 from __future__ import annotations
+# -*- coding: utf-8 -*-
 
 import json
 import os
@@ -61,7 +62,7 @@ def ensure_engine() -> subprocess.Popen | None:
         pass
     engine = voicevox_engine_path()
     if not engine.is_file():
-        raise RuntimeError(f"Khong tim thay VOICEVOX engine: {engine}")
+        raise RuntimeError(f"Không tìm thấy VOICEVOX engine: {engine}")
     for use_gpu in (True, False):
         command = [str(engine), "--host", "127.0.0.1", "--port", "50021"]
         if use_gpu:
@@ -74,15 +75,15 @@ def ensure_engine() -> subprocess.Popen | None:
                 break
             try:
                 _request("GET", "/version", timeout=2)
-                print("VOICEVOX engine san sang" + (" voi GPU." if use_gpu else "."), flush=True)
+                print("VOICEVOX engine sẵn sàng" + (" với GPU." if use_gpu else "."), flush=True)
                 return process
             except Exception:
                 time.sleep(0.5)
         if process.poll() is None:
             process.terminate()
         if use_gpu:
-            print("VOICEVOX GPU khong khoi dong duoc, thu lai bang CPU.", flush=True)
-    raise RuntimeError("VOICEVOX engine khong khoi dong duoc tren port 50021.")
+            print("VOICEVOX GPU không khởi động được, thử lại bằng CPU.", flush=True)
+    raise RuntimeError("VOICEVOX engine không khởi động được trên port 50021.")
 
 
 def speakers() -> list[dict]:
@@ -133,7 +134,7 @@ def synthesize_text_file(
     progress=None,
 ) -> tuple[Path, Path]:
     if outputs_are_current(text_path, wav_path, srt_path):
-        message = f"VOICEVOX bo qua, da co san: {wav_path.name}, {srt_path.name}"
+        message = f"VOICEVOX bỏ qua, đã có sẵn: {wav_path.name}, {srt_path.name}"
         print(message, flush=True)
         if progress:
             progress(message)
@@ -152,7 +153,7 @@ def synthesize_text_file(
     pause = max(0, settings.pause_ms) / 1000.0
 
     for index, cue in enumerate(cues, start=1):
-        message = f"VOICEVOX dang tao cau {index}/{len(cues)}"
+        message = f"VOICEVOX đang tạo câu {index}/{len(cues)}"
         print(message, flush=True)
         if progress:
             progress(message)

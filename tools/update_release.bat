@@ -2,7 +2,7 @@
 setlocal EnableExtensions
 
 REM Sua 2 dong nay moi khi muon phat hanh ban update moi.
-set "APP_VERSION=1.0.6"
+set "APP_VERSION=1.0.7"
 set "UPDATE_NOTES=update"
 
 cd /d "%~dp0\.."

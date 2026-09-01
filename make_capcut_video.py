@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Create a 16:9 MP4 from an SRT file and a folder of videos.
 
@@ -25,7 +26,9 @@ from pathlib import Path
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".avi", ".webm", ".m4v"}
 APP_DIR = Path(__file__).resolve().parent
 APP_BIN = APP_DIR / "bin"
-MAX_RENDER_WORKERS = 32
+MAX_GPU_RENDER_WORKERS = 8
+MAX_CPU_RENDER_WORKERS = 3
+MAX_RENDER_WORKERS = MAX_GPU_RENDER_WORKERS
 SUBPROCESS_CREATIONFLAGS = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 _ENCODER_PROBE_CACHE: dict[str, bool] = {}
 
@@ -47,7 +50,7 @@ def available_ffmpeg_encoders() -> set[str]:
 
 
 def choose_h264_encoder(use_gpu: bool = True) -> str:
-    if not use_gpu:
+    if not use_gpu and os.environ.get("CAPCUT_VIDEO_TOOL_ALLOW_CPU_ONLY") == "1":
         return "libx264"
     encoders = available_ffmpeg_encoders()
     for encoder in ("h264_nvenc", "h264_amf", "h264_qsv"):
@@ -97,17 +100,20 @@ def encoder_args(encoder: str) -> list[str]:
         return ["-c:v", encoder, "-quality", "speed", "-qp_i", "21", "-qp_p", "23"]
     if encoder == "h264_qsv":
         return ["-c:v", encoder, "-preset", "veryfast", "-global_quality", "23"]
-    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20"]
+    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-threads", "1"]
 
 
 def default_render_workers(encoder: str) -> int:
-    return MAX_RENDER_WORKERS
+    if encoder == "libx264":
+        return min(MAX_CPU_RENDER_WORKERS, max(1, (os.cpu_count() or 4) // 2))
+    return min(MAX_GPU_RENDER_WORKERS, 6)
 
 
 def normalize_render_workers(value: int | None, encoder: str) -> int:
+    max_workers = MAX_CPU_RENDER_WORKERS if encoder == "libx264" else MAX_GPU_RENDER_WORKERS
     if value is None or value <= 0:
         return default_render_workers(encoder)
-    return max(1, min(MAX_RENDER_WORKERS, int(value)))
+    return max(1, min(max_workers, int(value)))
 
 
 def run(command: list[str], *, capture: bool = False) -> subprocess.CompletedProcess:
@@ -412,7 +418,11 @@ def main() -> int:
     parser.add_argument("--width", type=int, default=1920)
     parser.add_argument("--height", type=int, default=1080)
     parser.add_argument("--seed", type=int, help="Random seed for repeatable results")
-    parser.add_argument("--no-gpu", action="store_true", help="Disable GPU H.264 encoder")
+    parser.add_argument(
+        "--no-gpu",
+        action="store_true",
+        help="Use CPU only when CAPCUT_VIDEO_TOOL_ALLOW_CPU_ONLY=1 is also set.",
+    )
     parser.add_argument(
         "--render-workers",
         type=int,

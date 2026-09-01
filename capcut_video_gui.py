@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
 Small Windows GUI for make_capcut_video.py.
 """
@@ -71,12 +72,6 @@ FISH_LANGUAGE_NAMES = {
     "es-MX": "Tiếng Tây Ban Nha Mexico",
 }
 FISH_LANGUAGE_CODES = {value: key for key, value in FISH_LANGUAGE_NAMES.items()}
-COMMON_CAPCUT_PATHS = [
-    Path(os.environ.get("LOCALAPPDATA", "")) / "CapCut" / "Apps" / "CapCut.exe",
-    Path(os.environ.get("LOCALAPPDATA", "")) / "CapCut" / "CapCut.exe",
-    Path(os.environ.get("PROGRAMFILES", "")) / "CapCut" / "CapCut.exe",
-    Path(os.environ.get("PROGRAMFILES(X86)", "")) / "CapCut" / "CapCut.exe",
-]
 
 
 def app_launcher_args(*extra_args: str) -> list[str]:
@@ -99,13 +94,6 @@ def load_app_config() -> dict:
 def save_app_config(data: dict) -> None:
     with APP_CONFIG.open("w", encoding="utf-8") as handle:
         json.dump(data, handle, ensure_ascii=False, indent=2)
-
-
-def find_capcut() -> Path | None:
-    for path in COMMON_CAPCUT_PATHS:
-        if path.is_file():
-            return path
-    return None
 
 
 class CapCutVideoApp(tk.Tk):
@@ -162,7 +150,7 @@ class CapCutVideoApp(tk.Tk):
         self.folder_var = tk.StringVar()
         self.output_var = tk.StringVar(value=str(Path.cwd() / "output.mp4"))
         self.clip_length_var = tk.StringVar(value="3")
-        self.render_workers_var = tk.StringVar(value=str(self.config_data.get("render_workers") or "32"))
+        self.render_workers_var = tk.StringVar(value=str(self.config_data.get("render_workers") or "0"))
         self.width_var = tk.StringVar(value="1920")
         self.height_var = tk.StringVar(value="1080")
         self.seed_var = tk.StringVar()
@@ -172,7 +160,6 @@ class CapCutVideoApp(tk.Tk):
         self.import_srt_var = tk.BooleanVar(value=True)
         self.resume_project_var = tk.BooleanVar(value=True)
         self.create_capcut_project_var = tk.BooleanVar(value=True)
-        self.open_capcut_var = tk.BooleanVar(value=True)
         self.use_pexels_var = tk.BooleanVar(value=False)
         self.source_var = tk.StringVar(value="local")
         self.pexels_query_var = tk.StringVar(value=str(self.config_data.get("pexels_query") or "nature"))
@@ -191,9 +178,6 @@ class CapCutVideoApp(tk.Tk):
                 or DEFAULT_MANIFEST_URL
             )
         )
-        capcut = find_capcut()
-        self.capcut_var = tk.StringVar(value=str(capcut) if capcut else "")
-
         self.worker: threading.Thread | None = None
         self._build_ui()
         self.reload_fish_voice_settings()
@@ -441,7 +425,6 @@ class CapCutVideoApp(tk.Tk):
         ttk.Entry(self.folder_row, textvariable=self.folder_var).grid(row=0, column=1, sticky="ew", padx=8, pady=5)
         ttk.Button(self.folder_row, text="Chọn", command=self.pick_folder).grid(row=0, column=2, sticky="ew", pady=5)
         self._path_row(root, 5, "File xuất", self.output_var, self.pick_output)
-        self._path_row(root, 6, "CapCut.exe", self.capcut_var, self.pick_capcut)
 
         options = ttk.Frame(root)
         options.grid(row=7, column=0, columnspan=3, sticky="ew", pady=(14, 8))
@@ -480,9 +463,6 @@ class CapCutVideoApp(tk.Tk):
         ttk.Checkbutton(options, text="Tiếp tục clip đã tạo", variable=self.resume_project_var).grid(
             row=3, column=3, columnspan=3, sticky="w", pady=(8, 0)
         )
-        ttk.Checkbutton(options, text="Mở CapCut sau khi xong", variable=self.open_capcut_var).grid(
-            row=2, column=3, columnspan=4, sticky="w", pady=(8, 0)
-        )
 
         self.pexels_frame = ttk.Frame(root)
         self.pexels_frame.grid(row=8, column=0, columnspan=3, sticky="ew", pady=(0, 8))
@@ -510,8 +490,25 @@ class CapCutVideoApp(tk.Tk):
             row=10, column=0, columnspan=3, sticky="w", pady=(0, 8)
         )
 
-        self.log = tk.Text(root, height=14, wrap="word")
-        self.log.grid(row=11, column=0, columnspan=3, sticky="nsew")
+        log_frame = ttk.Frame(root)
+        log_frame.grid(row=11, column=0, columnspan=3, sticky="nsew")
+        log_frame.rowconfigure(0, weight=1)
+        log_frame.columnconfigure(0, weight=1)
+        self.log = tk.Text(
+            log_frame,
+            height=14,
+            wrap="word",
+            state="disabled",
+            cursor="arrow",
+            undo=False,
+        )
+        self.log.grid(row=0, column=0, sticky="nsew")
+        log_scrollbar = ttk.Scrollbar(log_frame, orient="vertical", command=self.log.yview)
+        log_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.log.configure(yscrollcommand=log_scrollbar.set)
+        self.log.bind("<MouseWheel>", self.on_log_mousewheel)
+        self.log.bind("<Button-4>", self.on_log_mousewheel)
+        self.log.bind("<Button-5>", self.on_log_mousewheel)
         root.rowconfigure(11, weight=1)
         self._build_settings_ui(setting_tab)
         self.refresh_api_key_counts()
@@ -719,6 +716,8 @@ class CapCutVideoApp(tk.Tk):
     def on_mousewheel(self, event) -> None:
         if not hasattr(self, "scroll_canvas"):
             return
+        if getattr(event, "widget", None) is getattr(self, "log", None):
+            return
         if getattr(event, "num", None) == 4:
             delta = -1
         elif getattr(event, "num", None) == 5:
@@ -727,6 +726,17 @@ class CapCutVideoApp(tk.Tk):
             delta = -1 * int(event.delta / 120) if event.delta else 0
         if delta:
             self.scroll_canvas.yview_scroll(delta, "units")
+
+    def on_log_mousewheel(self, event) -> str:
+        if getattr(event, "num", None) == 4:
+            delta = -1
+        elif getattr(event, "num", None) == 5:
+            delta = 1
+        else:
+            delta = -1 * int(event.delta / 120) if event.delta else 0
+        if delta:
+            self.log.yview_scroll(delta, "units")
+        return "break"
 
     def update_voicevox_ui(self) -> None:
         if self.use_voicevox_var.get():
@@ -828,11 +838,6 @@ class CapCutVideoApp(tk.Tk):
         if path:
             self.output_var.set(path)
 
-    def pick_capcut(self) -> None:
-        path = filedialog.askopenfilename(filetypes=[("CapCut executable", "CapCut.exe"), ("EXE", "*.exe")])
-        if path:
-            self.capcut_var.set(path)
-
     def open_fish_mexico(self) -> None:
         if not FISH_MEXICO_RUN.is_file():
             messagebox.showerror("Fish Mexico", f"Không tìm thấy run_setting_fish.bat:\n{FISH_MEXICO_RUN}")
@@ -876,8 +881,15 @@ class CapCutVideoApp(tk.Tk):
         raise ValueError("Chưa thấy final.wav và final*.srt trong output Fish Mexico.")
 
     def write_log(self, text: str) -> None:
+        self.log.configure(state="normal")
         self.log.insert("end", text + "\n")
+        self.log.configure(state="disabled")
         self.log.see("end")
+
+    def clear_log(self) -> None:
+        self.log.configure(state="normal")
+        self.log.delete("1.0", "end")
+        self.log.configure(state="disabled")
 
     def write_fish_log(self, text: str) -> None:
         self.write_log(text)
@@ -1028,7 +1040,7 @@ class CapCutVideoApp(tk.Tk):
         self.start_button.configure(state="disabled")
         self.percent_var.set("0%")
         self.status_var.set("Đang bắt đầu...")
-        self.log.delete("1.0", "end")
+        self.clear_log()
         self.worker = threading.Thread(target=self.create_video, daemon=True)
         self.worker.start()
 
@@ -1216,13 +1228,13 @@ class CapCutVideoApp(tk.Tk):
         self.ui(self.write_fish_log, f"Fish Mexico: chia thành {len(units)} câu đọc.")
         self.ui(self.write_fish_log, f"Fish Mexico voice_id={reference_id or 'default'}, speed={speed}, max_chars={max_chars}")
         worker_count = max(1, min(len(api_keys), len(units)))
-        self.ui(self.write_fish_log, f"Fish API keys: {len(api_keys)}; chay song song {worker_count} luong.")
+        self.ui(self.write_fish_log, f"Fish API keys: {len(api_keys)}; chạy song song {worker_count} luồng.")
 
         def on_error(index, attempt, key_number, exc):
-            self.ui(self.write_fish_log, f"Fish Mexico loi cau {index}, key #{key_number}, lan {attempt}: {exc}")
+            self.ui(self.write_fish_log, f"Fish Mexico lỗi câu {index}, key #{key_number}, lần {attempt}: {exc}")
 
         def on_progress(done, total, result, workers):
-            self.ui(self.set_status, f"Fish Mexico da tao {done}/{total}")
+            self.ui(self.set_status, f"Fish Mexico đã tạo {done}/{total}")
             self.ui(self.set_progress, done, total)
             self.ui(self.write_fish_log, f"Fish Mexico OK {result['index']}/{total}: {result['duration']:.2f}s")
 
@@ -1269,7 +1281,8 @@ class CapCutVideoApp(tk.Tk):
             width = int(self.width_var.get())
             height = int(self.height_var.get())
             seed_text = self.seed_var.get().strip()
-            encoder = choose_h264_encoder(self.use_gpu_var.get())
+            self.use_gpu_var.set(True)
+            encoder = choose_h264_encoder(True)
             render_workers_text = self.render_workers_var.get().strip()
             render_workers = normalize_render_workers(int(render_workers_text) if render_workers_text else 0, encoder)
 
@@ -1366,10 +1379,10 @@ class CapCutVideoApp(tk.Tk):
                 self.ui(self.set_status, text)
 
             videos = collect_videos(video_folder, only_16x9=only_16x9, progress=scan_progress)
-            self.ui(self.set_status, "Dang doc thoi luong video nguon...")
+            self.ui(self.set_status, "Đang đọc thời lượng video nguồn...")
 
             def duration_progress(index: int, total: int, path: Path) -> None:
-                self.ui(self.set_status, f"Dang doc thoi luong video: {index}/{total} - {path.name}")
+                self.ui(self.set_status, f"Đang đọc thời lượng video: {index}/{total} - {path.name}")
 
             source_durations = probe_video_durations(
                 videos,
@@ -1384,8 +1397,8 @@ class CapCutVideoApp(tk.Tk):
                 self.ui(self.write_fish_log if self.voice_engine_var.get() == "mexico" else self.write_log, f"GPU đang bật cho bước dựng video: {encoder}")
             elif self.use_gpu_var.get():
                 self.ui(self.write_fish_log if self.voice_engine_var.get() == "mexico" else self.write_log, "GPU không khả dụng, dựng video bằng CPU libx264.")
-            self.ui(self.write_log, f"Thoi luong theo SRT: {duration:.2f}s")
-            self.ui(self.write_log, f"So clip can tao: {clip_count}")
+            self.ui(self.write_log, f"Thời lượng theo SRT: {duration:.2f}s")
+            self.ui(self.write_log, f"Số clip cần tạo: {clip_count}")
             self.ui(self.set_progress, 0, clip_count + 1)
 
             project_folder = None
@@ -1474,8 +1487,8 @@ class CapCutVideoApp(tk.Tk):
 
                 if render_jobs:
                     worker_count = min(render_workers, len(render_jobs))
-                    self.ui(self.write_log, f"Render song song {worker_count} luong cho {len(render_jobs)} clip.")
-                    self.ui(self.set_status, f"Dang render {len(render_jobs)} clip bang {worker_count} luong...")
+                    self.ui(self.write_log, f"Render song song {worker_count} luồng cho {len(render_jobs)} clip.")
+                    self.ui(self.set_status, f"Đang render {len(render_jobs)} clip bằng {worker_count} luồng...")
                     with ThreadPoolExecutor(max_workers=worker_count) as executor:
                         future_map = {}
                         for index, clip_path, current_clip_length in render_jobs:
@@ -1503,7 +1516,7 @@ class CapCutVideoApp(tk.Tk):
                             self.ui(self.set_progress, completed_clips, clip_count + 1)
 
                 if any(clip is None for clip in clips):
-                    raise RuntimeError(f"So clip tao duoc khong du: {sum(clip is not None for clip in clips)}/{clip_count}")
+                    raise RuntimeError(f"Số clip tạo được không đủ: {sum(clip is not None for clip in clips)}/{clip_count}")
                 clips = [clip for clip in clips if clip is not None]
 
                 if self.burn_subtitles_var.get():
@@ -1532,7 +1545,7 @@ class CapCutVideoApp(tk.Tk):
 
             self.ui(self.set_progress, clip_count + 1, clip_count + 1)
             if len(clips) != clip_count:
-                raise RuntimeError(f"So clip tao duoc khong du: {len(clips)}/{clip_count}")
+                raise RuntimeError(f"Số clip tạo được không đủ: {len(clips)}/{clip_count}")
             if self.create_capcut_project_var.get():
                 self.ui(self.set_status, "Đang tạo project CapCut...")
                 project = create_capcut_project_from_clips(
@@ -1552,7 +1565,6 @@ class CapCutVideoApp(tk.Tk):
             if output_created:
                 self.ui(self.write_log, f"Xong: {output}")
             self.ui(self.write_log, f"Clip riêng lẻ: {clips_output_dir}")
-            self.open_result(output)
             done_text = f"Đã tạo project CapCut:\n{project}" if self.create_capcut_project_var.get() else f"Đã tạo video:\n{output}"
             self.ui(messagebox.showinfo, "Hoàn tất", done_text)
         except Exception as exc:
@@ -1560,17 +1572,6 @@ class CapCutVideoApp(tk.Tk):
             self.ui(messagebox.showerror, "Lỗi", str(exc))
         finally:
             self.ui(self.start_button.configure, {"state": "normal"})
-
-    def open_result(self, output: Path) -> None:
-        if not self.open_capcut_var.get():
-            return
-        capcut_text = self.capcut_var.get().strip()
-        capcut = Path(capcut_text) if capcut_text else None
-        if capcut and capcut.is_file():
-            subprocess.Popen([str(capcut)], close_fds=True)
-            return
-        os.startfile(output.parent)
-
 
 def main() -> int:
     if "--fish-settings" in sys.argv[1:]:
